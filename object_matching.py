@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Object Matching Application using YOLO 11 and SIFT
+Object Matching Application using YOLO 11 and Deep Learning Feature Extraction
 This application provides two main processes:
-1. Database Loading: Extract objects from batch images and store SIFT features
-2. Query Processing: Match query objects against the database using FLANN
+1. Database Loading: Extract objects from batch images and store deep learning features
+2. Query Processing: Match query objects against the database using cosine similarity
 """
 
 import os
@@ -21,6 +21,15 @@ from ultralytics import YOLO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from tqdm import tqdm
+import torch
+import torch.nn as nn
+import torchvision.transforms as transforms
+from torchvision.models import resnet50, ResNet50_Weights
+from sklearn.metrics.pairwise import cosine_similarity
+from PIL import Image
+import warnings
+
+warnings.filterwarnings('ignore')
 
 # Configure logging
 logging.basicConfig(
@@ -32,27 +41,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-
-def keypoints_to_dict(keypoints):
-    """Convert cv2.KeyPoint objects to serializable dictionary format"""
-    if keypoints is None:
-        return None
-
-    return [{'x': kp.pt[0], 'y': kp.pt[1], 'size': kp.size,
-             'angle': kp.angle, 'response': kp.response, 'octave': kp.octave,
-             'class_id': kp.class_id} for kp in keypoints]
-
-
-def dict_to_keypoints(keypoints_dict):
-    """Convert dictionary format back to cv2.KeyPoint objects"""
-    if keypoints_dict is None:
-        return None
-
-    return [cv2.KeyPoint(x=kp['x'], y=kp['y'], size=kp['size'],
-                         angle=kp['angle'], response=kp['response'],
-                         octave=kp['octave'], class_id=kp['class_id'])
-            for kp in keypoints_dict]
 
 
 class DatabaseManager:
@@ -91,9 +79,8 @@ class DatabaseManager:
                 bbox_x2 INTEGER,
                 bbox_y2 INTEGER,
                 object_image_path TEXT,
-                keypoints_count INTEGER,
-                descriptors BLOB,
-                keypoints BLOB,
+                feature_vector BLOB,
+                feature_dim INTEGER,
                 created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (image_id) REFERENCES images (id)
             )
@@ -102,7 +89,7 @@ class DatabaseManager:
         # Create indexes for faster querying
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_object_class ON objects(object_class)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_confidence ON objects(confidence)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_keypoints_count ON objects(keypoints_count)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_feature_dim ON objects(feature_dim)')
 
         conn.commit()
         conn.close()
@@ -128,23 +115,20 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Convert keypoints to serializable format and serialize
-        keypoints_dict = keypoints_to_dict(object_data['keypoints'])
-        keypoints_blob = pickle.dumps(keypoints_dict) if keypoints_dict else None
-
-        # Serialize descriptors
-        descriptors_blob = pickle.dumps(object_data['descriptors']) if object_data['descriptors'] is not None else None
+        # Serialize feature vector
+        feature_blob = pickle.dumps(object_data['feature_vector']) if object_data[
+                                                                          'feature_vector'] is not None else None
+        feature_dim = len(object_data['feature_vector']) if object_data['feature_vector'] is not None else 0
 
         cursor.execute('''
             INSERT INTO objects (
                 image_id, object_class, confidence, bbox_x1, bbox_y1, bbox_x2, bbox_y2,
-                object_image_path, keypoints_count, descriptors, keypoints
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                object_image_path, feature_vector, feature_dim
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             image_id, object_data['class_name'], object_data['confidence'],
             object_data['bbox'][0], object_data['bbox'][1], object_data['bbox'][2], object_data['bbox'][3],
-            object_data['object_image_path'], object_data['keypoints_count'],
-            descriptors_blob, keypoints_blob
+            object_data['object_image_path'], feature_blob, feature_dim
         ))
 
         object_id = cursor.lastrowid
@@ -152,21 +136,21 @@ class DatabaseManager:
         conn.close()
         return object_id
 
-    def get_all_objects(self, object_class: str = None, min_keypoints: int = 10) -> List[Dict]:
+    def get_all_objects(self, object_class: str = None, min_feature_dim: int = 100) -> List[Dict]:
         """Retrieve all objects from the database with optional filtering"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         query = '''
             SELECT o.id, o.image_id, o.object_class, o.confidence, o.bbox_x1, o.bbox_y1, 
-                   o.bbox_x2, o.bbox_y2, o.object_image_path, o.keypoints_count, 
-                   o.descriptors, o.keypoints, i.filename, i.filepath
+                   o.bbox_x2, o.bbox_y2, o.object_image_path, o.feature_vector, o.feature_dim,
+                   i.filename, i.filepath
             FROM objects o
             JOIN images i ON o.image_id = i.id
-            WHERE o.keypoints_count >= ?
+            WHERE o.feature_dim >= ?
         '''
 
-        params = [min_keypoints]
+        params = [min_feature_dim]
 
         if object_class:
             query += " AND o.object_class = ?"
@@ -180,10 +164,6 @@ class DatabaseManager:
 
         objects = []
         for row in results:
-            # Deserialize keypoints and convert back to cv2.KeyPoint objects
-            keypoints_dict = pickle.loads(row[11]) if row[11] else None
-            keypoints = dict_to_keypoints(keypoints_dict)
-
             obj = {
                 'id': row[0],
                 'image_id': row[1],
@@ -191,11 +171,10 @@ class DatabaseManager:
                 'confidence': row[3],
                 'bbox': [row[4], row[5], row[6], row[7]],
                 'object_image_path': row[8],
-                'keypoints_count': row[9],
-                'descriptors': pickle.loads(row[10]) if row[10] else None,
-                'keypoints': keypoints,
-                'original_filename': row[12],
-                'original_filepath': row[13]
+                'feature_vector': pickle.loads(row[9]) if row[9] else None,
+                'feature_dim': row[10],
+                'original_filename': row[11],
+                'original_filepath': row[12]
             }
             objects.append(obj)
 
@@ -215,8 +194,8 @@ class DatabaseManager:
         cursor.execute('SELECT object_class, COUNT(*) FROM objects GROUP BY object_class')
         class_counts = dict(cursor.fetchall())
 
-        cursor.execute('SELECT AVG(keypoints_count) FROM objects WHERE keypoints_count > 0')
-        avg_keypoints = cursor.fetchone()[0] or 0
+        cursor.execute('SELECT AVG(feature_dim) FROM objects WHERE feature_dim > 0')
+        avg_feature_dim = cursor.fetchone()[0] or 0
 
         conn.close()
 
@@ -224,99 +203,137 @@ class DatabaseManager:
             'total_images': total_images,
             'total_objects': total_objects,
             'class_counts': class_counts,
-            'avg_keypoints': round(avg_keypoints, 2)
+            'avg_feature_dim': round(avg_feature_dim, 2)
         }
 
 
-class SIFTFeatureExtractor:
+class DeepFeatureExtractor:
     """
-    Handles SIFT feature extraction from images
+    Handles deep learning-based feature extraction using pre-trained ResNet
     """
 
-    def __init__(self, n_features: int = 5000):
-        self.sift = cv2.SIFT_create(nfeatures=n_features)
-        logger.info(f"SIFT extractor initialized with {n_features} features")
+    def __init__(self, model_name: str = "resnet50", feature_dim: int = 2048):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.feature_dim = feature_dim
 
-    def extract_features(self, image: np.ndarray) -> Tuple[List, np.ndarray]:
-        """
-        Extract SIFT features from an image
-
-        Args:
-            image (np.ndarray): Input image
-
-        Returns:
-            Tuple[List, np.ndarray]: Keypoints and descriptors
-        """
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # Load pre-trained ResNet model
+        if model_name == "resnet50":
+            self.model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+            # Remove the final classification layer to get feature vectors
+            self.model = nn.Sequential(*list(self.model.children())[:-1])
         else:
-            gray = image
+            raise ValueError(f"Unsupported model: {model_name}")
 
-        keypoints, descriptors = self.sift.detectAndCompute(gray, None)
+        self.model.to(self.device)
+        self.model.eval()
 
-        return keypoints, descriptors
+        # Image preprocessing pipeline
+        self.transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+        ])
 
+        logger.info(f"Deep feature extractor initialized with {model_name} on {self.device}")
 
-class FLANNMatcher:
-    """
-    Handles FLANN-based feature matching
-    """
-
-    def __init__(self):
-        # FLANN parameters
-        FLANN_INDEX_KDTREE = 1
-        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-        search_params = dict(checks=50)
-
-        self.matcher = cv2.FlannBasedMatcher(index_params, search_params)
-        logger.info("FLANN matcher initialized")
-
-    def match_features(self, query_descriptors: np.ndarray,
-                       db_descriptors: np.ndarray) -> List[cv2.DMatch]:
+    def extract_features(self, image: np.ndarray) -> np.ndarray:
         """
-        Match features between query and database descriptors
+        Extract deep learning features from an image
 
         Args:
-            query_descriptors (np.ndarray): Query image descriptors
-            db_descriptors (np.ndarray): Database image descriptors
+            image (np.ndarray): Input image (BGR format from OpenCV)
 
         Returns:
-            List[cv2.DMatch]: List of matches
+            np.ndarray: Feature vector
         """
-        if query_descriptors is None or db_descriptors is None:
-            return []
-
-        if len(query_descriptors) < 2 or len(db_descriptors) < 2:
-            return []
-
         try:
-            matches = self.matcher.knnMatch(query_descriptors, db_descriptors, k=2)
+            # Convert BGR to RGB
+            if len(image.shape) == 3:
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            else:
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
 
-            # Apply Lowe's ratio test
-            good_matches = []
-            for match_pair in matches:
-                if len(match_pair) == 2:
-                    m, n = match_pair
-                    if m.distance < 0.7 * n.distance:
-                        good_matches.append(m)
+            # Convert to PIL Image
+            pil_image = Image.fromarray(image_rgb)
 
-            return good_matches
-        except cv2.error as e:
-            logger.warning(f"FLANN matching error: {e}")
-            return []
+            # Apply preprocessing
+            input_tensor = self.transform(pil_image).unsqueeze(0).to(self.device)
+
+            # Extract features
+            with torch.no_grad():
+                features = self.model(input_tensor)
+                # Flatten the features
+                features = features.view(features.size(0), -1)
+                # Convert to numpy and normalize
+                features = features.cpu().numpy().flatten()
+                # L2 normalize
+                features = features / (np.linalg.norm(features) + 1e-8)
+
+            return features
+
+        except Exception as e:
+            logger.error(f"Feature extraction error: {e}")
+            return None
+
+    def compute_similarity(self, feature1: np.ndarray, feature2: np.ndarray) -> float:
+        """
+        Compute cosine similarity between two feature vectors
+
+        Args:
+            feature1 (np.ndarray): First feature vector
+            feature2 (np.ndarray): Second feature vector
+
+        Returns:
+            float: Cosine similarity score
+        """
+        if feature1 is None or feature2 is None:
+            return 0.0
+
+        # Reshape for sklearn cosine_similarity
+        feature1 = feature1.reshape(1, -1)
+        feature2 = feature2.reshape(1, -1)
+
+        similarity = cosine_similarity(feature1, feature2)[0, 0]
+        return float(similarity)
+
+
+class DeepFeatureMatcher:
+    """
+    Handles deep learning-based feature matching using cosine similarity
+    """
+
+    def __init__(self, feature_extractor: DeepFeatureExtractor):
+        self.feature_extractor = feature_extractor
+        logger.info("Deep feature matcher initialized")
+
+    def match_features(self, query_features: np.ndarray,
+                       db_features: np.ndarray) -> float:
+        """
+        Match features between query and database using cosine similarity
+
+        Args:
+            query_features (np.ndarray): Query feature vector
+            db_features (np.ndarray): Database feature vector
+
+        Returns:
+            float: Similarity score
+        """
+        return self.feature_extractor.compute_similarity(query_features, db_features)
 
 
 class ObjectMatchingApp:
     """
-    Main application class for object matching
+    Main application class for object matching using deep learning features
     """
 
-    def __init__(self, model_path: str = "yolo11n.pt", target_class: str = "person"):
+    def __init__(self, model_path: str = "yolo11n.pt", target_class: str = "person",
+                 feature_model: str = "resnet50"):
         self.model = YOLO(model_path)
         self.target_class = target_class
         self.db_manager = DatabaseManager()
-        self.sift_extractor = SIFTFeatureExtractor()
-        self.flann_matcher = FLANNMatcher()
+        self.feature_extractor = DeepFeatureExtractor(feature_model)
+        self.feature_matcher = DeepFeatureMatcher(self.feature_extractor)
 
         # Create directories
         self.extracted_objects_dir = "extracted_objects"
@@ -371,8 +388,15 @@ class ObjectMatchingApp:
                         # Extract object region
                         object_img = image[y1:y2, x1:x2]
 
-                        # Extract SIFT features
-                        keypoints, descriptors = self.sift_extractor.extract_features(object_img)
+                        # Skip if object is too small
+                        if object_img.shape[0] < 32 or object_img.shape[1] < 32:
+                            continue
+
+                        # Extract deep learning features
+                        features = self.feature_extractor.extract_features(object_img)
+
+                        if features is None:
+                            continue
 
                         # Save extracted object
                         object_filename = f"{base_name}_obj_{i:03d}_conf{confidence:.2f}.jpg"
@@ -385,14 +409,13 @@ class ObjectMatchingApp:
                             'confidence': confidence,
                             'bbox': [x1, y1, x2, y2],
                             'object_image_path': object_path,
-                            'keypoints': keypoints,
-                            'descriptors': descriptors,
-                            'keypoints_count': len(keypoints) if keypoints else 0
+                            'feature_vector': features,
+                            'feature_dim': len(features)
                         }
 
                         processed_objects.append(object_data)
                         logger.info(f"Processed object {i}: {object_data['class_name']} "
-                                    f"(conf: {confidence:.2f}, keypoints: {object_data['keypoints_count']})")
+                                    f"(conf: {confidence:.2f}, feature_dim: {object_data['feature_dim']})")
 
         return processed_objects
 
@@ -435,7 +458,9 @@ class ObjectMatchingApp:
 
         start_time = datetime.now()
 
-        # Process images in parallel
+        # Process images in parallel (but limit to avoid GPU memory issues)
+        max_workers = min(max_workers, 2) if torch.cuda.is_available() else max_workers
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
             future_to_image = {
@@ -478,7 +503,8 @@ class ObjectMatchingApp:
         return stats
 
     def query_object(self, query_image_path: str, confidence_threshold: float = 0.5,
-                     top_k: int = 10, object_class: str = None) -> List[Dict]:
+                     top_k: int = 10, object_class: str = None,
+                     min_similarity: float = 0.5) -> List[Dict]:
         """
         Query the database with a single object image
 
@@ -487,6 +513,7 @@ class ObjectMatchingApp:
             confidence_threshold (float): Minimum confidence threshold
             top_k (int): Number of top matches to return
             object_class (str): Filter by object class (optional)
+            min_similarity (float): Minimum similarity threshold
 
         Returns:
             List[Dict]: Top matching objects with similarity scores
@@ -502,17 +529,17 @@ class ObjectMatchingApp:
 
         # Use the first detected object as query
         query_obj = query_objects[0]
-        query_descriptors = query_obj['descriptors']
+        query_features = query_obj['feature_vector']
 
-        if query_descriptors is None or len(query_descriptors) == 0:
-            logger.warning("No SIFT features found in query object")
+        if query_features is None:
+            logger.warning("No features extracted from query object")
             return []
 
         logger.info(f"Query object: {query_obj['class_name']} "
-                    f"(conf: {query_obj['confidence']:.2f}, keypoints: {query_obj['keypoints_count']})")
+                    f"(conf: {query_obj['confidence']:.2f}, feature_dim: {query_obj['feature_dim']})")
 
         # Get database objects
-        db_objects = self.db_manager.get_all_objects(object_class, min_keypoints=10)
+        db_objects = self.db_manager.get_all_objects(object_class, min_feature_dim=100)
 
         if not db_objects:
             logger.warning("No objects found in database")
@@ -524,30 +551,24 @@ class ObjectMatchingApp:
         matches_results = []
 
         for db_obj in tqdm(db_objects, desc="Matching objects"):
-            if db_obj['descriptors'] is None:
+            if db_obj['feature_vector'] is None:
                 continue
 
-            # Match features
-            matches = self.flann_matcher.match_features(query_descriptors, db_obj['descriptors'])
+            # Calculate similarity using cosine similarity
+            similarity_score = self.feature_matcher.match_features(
+                query_features, db_obj['feature_vector']
+            )
 
-            if matches:
-                # Calculate similarity score (number of good matches)
-                similarity_score = len(matches)
-
-                # Normalize by query keypoints count
-                normalized_score = similarity_score / len(query_descriptors)
-
+            if similarity_score >= min_similarity:
                 match_result = {
                     'object_id': db_obj['id'],
                     'similarity_score': similarity_score,
-                    'normalized_score': normalized_score,
-                    'matches_count': len(matches),
                     'object_class': db_obj['object_class'],
                     'confidence': db_obj['confidence'],
                     'original_filename': db_obj['original_filename'],
                     'original_filepath': db_obj['original_filepath'],
                     'object_image_path': db_obj['object_image_path'],
-                    'keypoints_count': db_obj['keypoints_count']
+                    'feature_dim': db_obj['feature_dim']
                 }
 
                 matches_results.append(match_result)
@@ -558,11 +579,10 @@ class ObjectMatchingApp:
         # Return top k matches
         top_matches = matches_results[:top_k]
 
-        logger.info(f"Found {len(top_matches)} matches")
+        logger.info(f"Found {len(top_matches)} matches above threshold {min_similarity}")
         for i, match in enumerate(top_matches[:5]):  # Log top 5
             logger.info(f"  {i + 1}. {match['original_filename']} "
-                        f"(score: {match['similarity_score']}, "
-                        f"norm: {match['normalized_score']:.3f})")
+                        f"(similarity: {match['similarity_score']:.3f})")
 
         return top_matches
 
@@ -573,25 +593,31 @@ class ObjectMatchingApp:
             'database_stats': db_stats,
             'target_class': self.target_class,
             'extracted_objects_dir': self.extracted_objects_dir,
-            'query_objects_dir': self.query_objects_dir
+            'query_objects_dir': self.query_objects_dir,
+            'feature_extractor': 'Deep Learning (ResNet50)',
+            'device': str(self.feature_extractor.device)
         }
 
 
 def main():
     """Main function for command line interface"""
-    parser = argparse.ArgumentParser(description="Object Matching Application")
+    parser = argparse.ArgumentParser(description="Object Matching Application with Deep Learning Features")
     parser.add_argument("--mode", choices=["load", "query", "stats"], required=True,
                         help="Operation mode")
     parser.add_argument("--model", type=str, default="yolo11n.pt",
                         help="YOLO model path")
     parser.add_argument("--class", type=str, default="person", dest="target_class",
                         help="Target object class")
+    parser.add_argument("--feature-model", type=str, default="resnet50",
+                        help="Deep learning model for feature extraction")
     parser.add_argument("--images-dir", type=str,
                         help="Directory containing images (for load mode)")
     parser.add_argument("--query-image", type=str,
                         help="Query image path (for query mode)")
     parser.add_argument("--confidence", type=float, default=0.5,
                         help="Confidence threshold")
+    parser.add_argument("--similarity", type=float, default=0.5,
+                        help="Minimum similarity threshold")
     parser.add_argument("--top-k", type=int, default=10,
                         help="Number of top matches to return")
     parser.add_argument("--workers", type=int, default=4,
@@ -600,7 +626,7 @@ def main():
     args = parser.parse_args()
 
     # Initialize application
-    app = ObjectMatchingApp(args.model, args.target_class)
+    app = ObjectMatchingApp(args.model, args.target_class, args.feature_model)
 
     if args.mode == "load":
         if not args.images_dir:
@@ -628,14 +654,14 @@ def main():
             print(f"Error: Query image {args.query_image} does not exist")
             return
 
-        matches = app.query_object(args.query_image, args.confidence, args.top_k)
+        matches = app.query_object(args.query_image, args.confidence, args.top_k,
+                                   min_similarity=args.similarity)
 
         if matches:
             print(f"\nTop {len(matches)} matches:")
             for i, match in enumerate(matches):
                 print(f"  {i + 1}. {match['original_filename']}")
-                print(f"      Similarity score: {match['similarity_score']}")
-                print(f"      Normalized score: {match['normalized_score']:.3f}")
+                print(f"      Similarity score: {match['similarity_score']:.3f}")
                 print(f"      Object class: {match['object_class']}")
                 print(f"      Confidence: {match['confidence']:.2f}")
                 print(f"      Original image: {match['original_filepath']}")
@@ -647,9 +673,11 @@ def main():
         stats = app.get_stats()
         print("\nApplication Statistics:")
         print(f"  Target class: {stats['target_class']}")
+        print(f"  Feature extractor: {stats['feature_extractor']}")
+        print(f"  Device: {stats['device']}")
         print(f"  Total images in database: {stats['database_stats']['total_images']}")
         print(f"  Total objects in database: {stats['database_stats']['total_objects']}")
-        print(f"  Average keypoints per object: {stats['database_stats']['avg_keypoints']}")
+        print(f"  Average feature dimension: {stats['database_stats']['avg_feature_dim']}")
         print(f"  Class distribution:")
         for class_name, count in stats['database_stats']['class_counts'].items():
             print(f"    {class_name}: {count}")
