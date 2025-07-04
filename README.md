@@ -1,42 +1,43 @@
-# Object Matching Application using YOLO 11 and SIFT
+# Object Matching Application
 
-A powerful computer vision application that combines YOLO 11 object detection with SIFT feature extraction for robust object matching and retrieval. The application can process batches of images to build a searchable database of objects and then match query objects against this database.
+A powerful computer vision application that combines **YOLO 11** object detection with **DINOv2** feature extraction to create a robust object matching system. This application allows you to build a database of objects from images and then query similar objects using deep learning-based feature matching.
 
 ## Features
 
-- **Object Detection**: Uses YOLO 11 for accurate object detection with configurable confidence thresholds
-- **Feature Extraction**: Employs SIFT (Scale-Invariant Feature Transform) for robust feature extraction
-- **Database Storage**: SQLite database for efficient storage and retrieval of object features
-- **Feature Matching**: FLANN-based matching for fast similarity search
-- **Parallel Processing**: Multi-threaded batch processing for efficient database building
-- **Command Line Interface**: Easy-to-use CLI for all operations
-- **Comprehensive Logging**: Detailed logging for monitoring and debugging
+- **Object Detection**: Uses YOLO 11 for accurate object detection
+- **Deep Feature Extraction**: Leverages DINOv2 (Vision Transformer) for high-quality feature vectors
+- **Database Management**: SQLite-based storage for efficient object and feature management
+- **Similarity Search**: Cosine similarity-based matching for finding similar objects
+- **Parallel Processing**: Multi-threaded processing for faster database creation
+- **Flexible Querying**: Support for class-based filtering and similarity thresholds
+- **Command Line Interface**: Easy-to-use CLI for batch processing and queries
+
+## Architecture
+
+The application consists of several key components:
+
+1. **DatabaseManager**: Handles SQLite database operations for storing object metadata and features
+2. **DINOv2FeatureExtractor**: Extracts deep learning features using Facebook's DINOv2 model
+3. **DeepFeatureMatcher**: Performs similarity matching using cosine similarity
+4. **ObjectMatchingApp**: Main application orchestrating the entire workflow
 
 ## Installation
 
 ### Prerequisites
 
 - Python 3.8 or higher
-- OpenCV 4.x
-- CUDA-compatible GPU (optional, for faster YOLO inference)
+- CUDA-compatible GPU (recommended for better performance)
 
-### Dependencies
-
-Install the required packages:
+### Required Dependencies
 
 ```bash
-pip install ultralytics opencv-python numpy sqlite3 pathlib tqdm
+pip install ultralytics torch torchvision opencv-python numpy scikit-learn
+pip install pillow pathlib tqdm sqlite3 pickle logging argparse
 ```
 
-Or install from requirements.txt:
+### Additional Setup
 
-```bash
-pip install -r requirements.txt
-```
-
-### YOLO Model
-
-The application will automatically download the YOLO 11 model (`yolo11n.pt`) on first run. You can also specify a custom model path.
+The application will automatically download the DINOv2 model from PyTorch Hub on first run.
 
 ## Usage
 
@@ -44,129 +45,149 @@ The application operates in three main modes:
 
 ### 1. Database Loading Mode
 
-Process a batch of images to extract objects and build the feature database:
+Process a directory of images to extract objects and build the feature database:
 
 ```bash
-python object_matching.py --mode load --images-dir /path/to/images --class person --confidence 0.5 --workers 4
+python object_matching.py --mode load --images-dir /path/to/images --class person --confidence 0.5
 ```
 
 **Parameters:**
 - `--images-dir`: Directory containing images to process
-- `--class`: Target object class (default: "person")
-- `--confidence`: Minimum confidence threshold (default: 0.5)
-- `--workers`: Number of parallel workers (default: 4)
+- `--class`: Target object class (e.g., "person", "car", "bicycle")
+- `--confidence`: Minimum detection confidence threshold (0.0-1.0)
+- `--workers`: Number of parallel workers for processing
 
 ### 2. Query Mode
 
 Search for similar objects using a query image:
 
 ```bash
-python object_matching.py --mode query --query-image /path/to/query.jpg --confidence 0.5 --top-k 10
+python object_matching.py --mode query --query-image /path/to/query.jpg --top-k 10 --similarity 0.5
 ```
 
 **Parameters:**
 - `--query-image`: Path to the query image
-- `--confidence`: Minimum confidence threshold (default: 0.5)
-- `--top-k`: Number of top matches to return (default: 10)
+- `--top-k`: Number of top matches to return
+- `--similarity`: Minimum similarity threshold (0.0-1.0)
 
 ### 3. Statistics Mode
 
-View database statistics and information:
+View database and application statistics:
 
 ```bash
 python object_matching.py --mode stats
-```
-
-### Complete Example
-
-```bash
-# 1. Build database from images
-python object_matching.py --mode load --images-dir ./training_images --class person --confidence 0.6
-
-# 2. Query the database
-python object_matching.py --mode query --query-image ./query.jpg --top-k 5
-
-# 3. View statistics
-python object_matching.py --mode stats
-```
-
-## Application Architecture
-
-### Components
-
-1. **DatabaseManager**: Handles SQLite database operations
-   - Stores image metadata and object features
-   - Manages keypoint serialization/deserialization
-   - Provides efficient querying capabilities
-
-2. **SIFTFeatureExtractor**: Extracts SIFT features from image regions
-   - Configurable number of features
-   - Robust to scale and rotation changes
-
-3. **FLANNMatcher**: Fast feature matching using FLANN
-   - KD-tree based indexing for speed
-   - Lowe's ratio test for match quality
-
-4. **ObjectMatchingApp**: Main application orchestrator
-   - Coordinates all components
-   - Handles parallel processing
-   - Manages file operations
-
-### Database Schema
-
-The application uses two main tables:
-
-**Images Table:**
-- `id`: Primary key
-- `filename`: Original filename
-- `filepath`: Full file path
-- `upload_date`: Processing timestamp
-- `processed`: Processing status
-
-**Objects Table:**
-- `id`: Primary key
-- `image_id`: Foreign key to images table
-- `object_class`: Detected object class
-- `confidence`: Detection confidence
-- `bbox_*`: Bounding box coordinates
-- `object_image_path`: Path to extracted object image
-- `keypoints_count`: Number of SIFT keypoints
-- `descriptors`: SIFT descriptors (BLOB)
-- `keypoints`: SIFT keypoints (BLOB)
-
-## Output Structure
-
-The application creates the following directory structure:
-
-```
-project_root/
-├── object_matching.py
-├── object_features.db          # SQLite database
-├── object_matching.log         # Application logs
-├── extracted_objects/          # Extracted object images
-│   ├── image1_obj_001_conf0.85.jpg
-│   ├── image1_obj_002_conf0.72.jpg
-│   └── ...
-└── query_objects/              # Query-related files
 ```
 
 ## Configuration Options
 
-### YOLO Model Options
+### YOLO Model Selection
+```bash
+--model yolo11n.pt    # Nano (fastest)
+--model yolo11s.pt    # Small
+--model yolo11m.pt    # Medium
+--model yolo11l.pt    # Large
+--model yolo11x.pt    # Extra Large (most accurate)
+```
 
-- `yolo11n.pt`: Nano model (fastest, least accurate)
-- `yolo11s.pt`: Small model (balanced)
-- `yolo11m.pt`: Medium model (more accurate)
-- `yolo11l.pt`: Large model (most accurate, slowest)
+### DINOv2 Model Variants
+```bash
+--feature-model dinov2_vits14    # Small (384 dim) - Default
+--feature-model dinov2_vitb14    # Base (768 dim)
+--feature-model dinov2_vitl14    # Large (1024 dim)
+--feature-model dinov2_vitg14    # Giant (1536 dim)
+```
 
-### Supported Object Classes
+### Advanced Features
+```bash
+--patch-features    # Enable patch token features for more detailed representation
+```
 
-The application supports all YOLO 11 object classes:
-- person, bicycle, car, motorcycle, airplane, bus, train, truck
-- boat, traffic light, fire hydrant, stop sign, parking meter
-- And many more...
+## Examples
 
-### Supported Image Formats
+### Complete Workflow Example
+
+1. **Build a person database from a photo collection:**
+```bash
+python object_matching.py --mode load --images-dir ./photos --class person --confidence 0.6 --workers 4
+```
+
+2. **Query for similar people:**
+```bash
+python object_matching.py --mode query --query-image ./query_person.jpg --top-k 5 --similarity 0.7
+```
+
+3. **Check database statistics:**
+```bash
+python object_matching.py --mode stats
+```
+
+### Sample Output
+
+**Database Loading:**
+```
+Database Loading Results:
+  Total images: 1000
+  Processed images: 987
+  Total objects extracted: 2341
+  Failed images: 13
+  Processing time: 245.67 seconds
+```
+
+**Query Results:**
+```
+Top 5 matches:
+  1. IMG_2023_001.jpg
+      Similarity score: 0.892
+      Object class: person
+      Confidence: 0.87
+      Original image: /photos/IMG_2023_001.jpg
+
+  2. portrait_045.jpg
+      Similarity score: 0.834
+      Object class: person
+      Confidence: 0.92
+      Original image: /photos/portrait_045.jpg
+```
+
+## Database Schema
+
+The application uses SQLite with the following schema:
+
+### Images Table
+- `id`: Primary key
+- `filename`: Original filename
+- `filepath`: Full file path
+- `created_at`: Timestamp
+
+### Objects Table
+- `id`: Primary key
+- `image_id`: Foreign key to images table
+- `object_class`: Detected object class
+- `confidence`: Detection confidence score
+- `bbox_x1`, `bbox_y1`, `bbox_x2`, `bbox_y2`: Bounding box coordinates
+- `object_image_path`: Path to extracted object image
+- `feature_vector`: Serialized DINOv2 features (BLOB)
+- `feature_dim`: Feature vector dimension
+- `created_at`: Timestamp
+
+## Performance Considerations
+
+### GPU Usage
+- DINOv2 feature extraction benefits significantly from GPU acceleration
+- Automatic detection of CUDA availability
+- Parallel processing is limited on GPU to prevent memory issues
+
+### Memory Management
+- Features are stored as compressed BLOB data in SQLite
+- Large databases may require substantial disk space
+- Consider using smaller DINOv2 models for memory-constrained environments
+
+### Processing Speed
+- YOLO 11 Nano: ~50-100 images/minute (CPU)
+- DINOv2 feature extraction: ~10-30 objects/second (GPU)
+- Database queries: Near real-time for thousands of objects
+
+## Supported Image Formats
 
 - JPEG (.jpg, .jpeg)
 - PNG (.png)
@@ -174,99 +195,87 @@ The application supports all YOLO 11 object classes:
 - TIFF (.tiff)
 - WebP (.webp)
 
-## Performance Tuning
+## Output Structure
 
-### For Large Datasets
-
-1. **Increase worker count** for parallel processing:
-   ```bash
-   --workers 8
-   ```
-
-2. **Adjust SIFT parameters** by modifying `SIFTFeatureExtractor`:
-   ```python
-   self.sift = cv2.SIFT_create(nfeatures=3000)  # Reduce features for speed
-   ```
-
-3. **Use GPU acceleration** with YOLO:
-   ```bash
-   # Ensure CUDA is available
-   python -c "import torch; print(torch.cuda.is_available())"
-   ```
-
-### For Better Accuracy
-
-1. **Lower confidence threshold**:
-   ```bash
-   --confidence 0.3
-   ```
-
-2. **Increase SIFT features**:
-   ```python
-   self.sift = cv2.SIFT_create(nfeatures=8000)
-   ```
-
-3. **Use larger YOLO model**:
-   ```bash
-   --model yolo11l.pt
-   ```
+```
+project_directory/
+├── object_features.db          # SQLite database
+├── extracted_objects/          # Individual object images
+│   ├── img001_obj_001_conf0.85.jpg
+│   ├── img001_obj_002_conf0.92.jpg
+│   └── ...
+├── query_objects/             # Query object images
+├── object_matching.log        # Application logs
+└── object_matching.py         # Main application
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"cannot pickle 'cv2.KeyPoint' object"**
-   - This is fixed in the current version through keypoint serialization
+1. **CUDA Out of Memory**
+   - Reduce batch size or use smaller DINOv2 model
+   - Limit number of parallel workers: `--workers 1`
 
-2. **"No objects detected"**
-   - Lower the confidence threshold
-   - Check if the target class is present in images
-   - Verify image quality and format
+2. **No Objects Detected**
+   - Lower confidence threshold: `--confidence 0.3`
+   - Verify target class name matches YOLO classes
 
-3. **"FLANN matching error"**
-   - Ensure sufficient keypoints are extracted
-   - Check descriptor compatibility
+3. **Poor Matching Results**
+   - Increase similarity threshold: `--similarity 0.7`
+   - Try different DINOv2 model variants
+   - Enable patch features: `--patch-features`
 
-4. **Memory issues with large datasets**
-   - Reduce batch size by decreasing worker count
-   - Process images in smaller chunks
+### Model Downloads
 
-### Logging
+DINOv2 models are downloaded automatically from PyTorch Hub. If you encounter download issues:
+- Ensure internet connection
+- Check firewall settings
+- Consider manual model download
 
-Check the `object_matching.log` file for detailed execution logs:
+## Advanced Usage
 
-```bash
-tail -f object_matching.log
-```
+### Custom Object Classes
 
-## API Reference
+YOLO 11 supports 80 object classes from COCO dataset:
+- person, bicycle, car, motorcycle, airplane, bus, train, truck
+- traffic light, fire hydrant, stop sign, parking meter, bench
+- cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe
+- And many more...
 
-### DatabaseManager
+### Batch Processing Scripts
 
-```python
-db = DatabaseManager("custom_db.db")
-image_id = db.add_image(filename, filepath)
-object_id = db.add_object(image_id, object_data)
-objects = db.get_all_objects(object_class="person", min_keypoints=10)
-stats = db.get_database_stats()
-```
-
-### ObjectMatchingApp
+For large-scale processing, consider creating wrapper scripts:
 
 ```python
-app = ObjectMatchingApp(model_path="yolo11n.pt", target_class="person")
-stats = app.load_database(images_dir, confidence_threshold=0.5)
-matches = app.query_object(query_image_path, top_k=10)
-```
+import subprocess
+import os
 
+def process_directory_batch(base_dir, class_name):
+    for subdir in os.listdir(base_dir):
+        if os.path.isdir(os.path.join(base_dir, subdir)):
+            cmd = [
+                "python", "object_matching.py",
+                "--mode", "load",
+                "--images-dir", os.path.join(base_dir, subdir),
+                "--class", class_name,
+                "--confidence", "0.6"
+            ]
+            subprocess.run(cmd)
+```
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project uses several open-source components:
+- YOLO 11 by Ultralytics
+- DINOv2 by Facebook Research
+- Various Python libraries with their respective licenses
 
-## Acknowledgments
 
-- [Ultralytics](https://github.com/ultralytics/ultralytics) for YOLO 11
-- [OpenCV](https://opencv.org/) for computer vision operations
-- [SIFT](https://en.wikipedia.org/wiki/Scale-invariant_feature_transform) algorithm by David Lowe
+## Future Enhancements
 
+- Support for video processing
+- Web-based interface
+- Real-time object tracking
+- Integration with cloud storage
+- Export capabilities for analysis tools
