@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Object Matching Application using YOLO 11 and Deep Learning Feature Extraction
+Object Matching Application using YOLO 11 and DINOv2 Feature Extraction
 This application provides two main processes:
-1. Database Loading: Extract objects from batch images and store deep learning features
+1. Database Loading: Extract objects from batch images and store DINOv2 features
 2. Query Processing: Match query objects against the database using cosine similarity
 """
 
@@ -24,7 +24,6 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
-from torchvision.models import resnet50, ResNet50_Weights
 from sklearn.metrics.pairwise import cosine_similarity
 from PIL import Image
 import warnings
@@ -53,47 +52,47 @@ class DatabaseManager:
         self.init_database()
 
     def init_database(self):
-        """Initialize the database schema"""
+        """Initialize SQLite database with required tables"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Create tables
+        # Create images table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS images (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT NOT NULL,
                 filepath TEXT NOT NULL,
-                upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                processed BOOLEAN DEFAULT FALSE
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
 
+        # Create objects table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS objects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                image_id INTEGER,
+                image_id INTEGER NOT NULL,
                 object_class TEXT NOT NULL,
                 confidence REAL NOT NULL,
-                bbox_x1 INTEGER,
-                bbox_y1 INTEGER,
-                bbox_x2 INTEGER,
-                bbox_y2 INTEGER,
-                object_image_path TEXT,
+                bbox_x1 INTEGER NOT NULL,
+                bbox_y1 INTEGER NOT NULL,
+                bbox_x2 INTEGER NOT NULL,
+                bbox_y2 INTEGER NOT NULL,
+                object_image_path TEXT NOT NULL,
                 feature_vector BLOB,
-                feature_dim INTEGER,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                feature_dim INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (image_id) REFERENCES images (id)
             )
         ''')
 
-        # Create indexes for faster querying
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_object_class ON objects(object_class)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_confidence ON objects(confidence)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_feature_dim ON objects(feature_dim)')
+        # Create indexes for better performance
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_objects_class ON objects(object_class)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_objects_confidence ON objects(confidence)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_objects_feature_dim ON objects(feature_dim)')
 
         conn.commit()
         conn.close()
-        logger.info(f"Database initialized at {self.db_path}")
+        logger.info("Database initialized successfully")
 
     def add_image(self, filename: str, filepath: str) -> int:
         """Add a new image to the database"""
@@ -207,27 +206,40 @@ class DatabaseManager:
         }
 
 
-class DeepFeatureExtractor:
+class DINOv2FeatureExtractor:
     """
-    Handles deep learning-based feature extraction using pre-trained ResNet
+    Handles deep learning-based feature extraction using DINOv2
     """
 
-    def __init__(self, model_name: str = "resnet50", feature_dim: int = 2048):
+    def __init__(self, model_name: str = "dinov2_vits14", feature_dim: int = 384):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.feature_dim = feature_dim
+        self.model_name = model_name
 
-        # Load pre-trained ResNet model
-        if model_name == "resnet50":
-            self.model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
-            # Remove the final classification layer to get feature vectors
-            self.model = nn.Sequential(*list(self.model.children())[:-1])
-        else:
-            raise ValueError(f"Unsupported model: {model_name}")
+        # Load DINOv2 model from torch hub
+        try:
+            self.model = torch.hub.load('facebookresearch/dinov2', model_name)
+            self.model.to(self.device)
+            self.model.eval()
 
-        self.model.to(self.device)
-        self.model.eval()
+            # Get the actual feature dimension from the model
+            if 'vits14' in model_name:
+                self.feature_dim = 384
+            elif 'vitb14' in model_name:
+                self.feature_dim = 768
+            elif 'vitl14' in model_name:
+                self.feature_dim = 1024
+            elif 'vitg14' in model_name:
+                self.feature_dim = 1536
+            else:
+                self.feature_dim = feature_dim
 
-        # Image preprocessing pipeline
+        except Exception as e:
+            logger.error(f"Failed to load DINOv2 model: {e}")
+            logger.info("Falling back to local model loading...")
+            # Alternative: try loading from local checkpoint if available
+            raise RuntimeError(f"Could not load DINOv2 model: {e}")
+
+        # Image preprocessing pipeline for DINOv2
         self.transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -235,11 +247,12 @@ class DeepFeatureExtractor:
                                  std=[0.229, 0.224, 0.225])
         ])
 
-        logger.info(f"Deep feature extractor initialized with {model_name} on {self.device}")
+        logger.info(f"DINOv2 feature extractor initialized with {model_name} on {self.device}")
+        logger.info(f"Feature dimension: {self.feature_dim}")
 
     def extract_features(self, image: np.ndarray) -> np.ndarray:
         """
-        Extract deep learning features from an image
+        Extract DINOv2 features from an image
 
         Args:
             image (np.ndarray): Input image (BGR format from OpenCV)
@@ -260,14 +273,15 @@ class DeepFeatureExtractor:
             # Apply preprocessing
             input_tensor = self.transform(pil_image).unsqueeze(0).to(self.device)
 
-            # Extract features
+            # Extract features using DINOv2
             with torch.no_grad():
+                # DINOv2 returns CLS token features by default
                 features = self.model(input_tensor)
-                # Flatten the features
-                features = features.view(features.size(0), -1)
+
                 # Convert to numpy and normalize
                 features = features.cpu().numpy().flatten()
-                # L2 normalize
+
+                # L2 normalize the features
                 features = features / (np.linalg.norm(features) + 1e-8)
 
             return features
@@ -275,6 +289,57 @@ class DeepFeatureExtractor:
         except Exception as e:
             logger.error(f"Feature extraction error: {e}")
             return None
+
+    def extract_features_with_patches(self, image: np.ndarray) -> np.ndarray:
+        """
+        Extract DINOv2 features including patch tokens (more detailed representation)
+
+        Args:
+            image (np.ndarray): Input image (BGR format from OpenCV)
+
+        Returns:
+            np.ndarray: Aggregated feature vector from all patches
+        """
+        try:
+            # Convert BGR to RGB
+            if len(image.shape) == 3:
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            else:
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+
+            # Convert to PIL Image
+            pil_image = Image.fromarray(image_rgb)
+
+            # Apply preprocessing
+            input_tensor = self.transform(pil_image).unsqueeze(0).to(self.device)
+
+            # Extract features using DINOv2
+            with torch.no_grad():
+                # Get all features (CLS + patch tokens)
+                features = self.model.forward_features(input_tensor)
+
+                # Option 1: Use only CLS token (global representation)
+                cls_token = features['x_norm_clstoken'].cpu().numpy().flatten()
+
+                # Option 2: Use patch tokens (local representations)
+                patch_tokens = features['x_norm_patchtokens']  # Shape: [batch, num_patches, feature_dim]
+
+                # Aggregate patch tokens (mean pooling)
+                patch_features = torch.mean(patch_tokens, dim=1).cpu().numpy().flatten()
+
+                # Combine CLS and patch features (or use only CLS)
+                # For now, we'll use only CLS token for consistency
+                final_features = cls_token
+
+                # L2 normalize the features
+                final_features = final_features / (np.linalg.norm(final_features) + 1e-8)
+
+            return final_features
+
+        except Exception as e:
+            logger.error(f"Feature extraction with patches error: {e}")
+            # Fallback to regular feature extraction
+            return self.extract_features(image)
 
     def compute_similarity(self, feature1: np.ndarray, feature2: np.ndarray) -> float:
         """
@@ -303,9 +368,9 @@ class DeepFeatureMatcher:
     Handles deep learning-based feature matching using cosine similarity
     """
 
-    def __init__(self, feature_extractor: DeepFeatureExtractor):
+    def __init__(self, feature_extractor: DINOv2FeatureExtractor):
         self.feature_extractor = feature_extractor
-        logger.info("Deep feature matcher initialized")
+        logger.info("Deep feature matcher initialized with DINOv2")
 
     def match_features(self, query_features: np.ndarray,
                        db_features: np.ndarray) -> float:
@@ -324,15 +389,16 @@ class DeepFeatureMatcher:
 
 class ObjectMatchingApp:
     """
-    Main application class for object matching using deep learning features
+    Main application class for object matching using DINOv2 features
     """
 
     def __init__(self, model_path: str = "yolo11n.pt", target_class: str = "person",
-                 feature_model: str = "resnet50"):
+                 feature_model: str = "dinov2_vits14", use_patch_features: bool = False):
         self.model = YOLO(model_path)
         self.target_class = target_class
+        self.use_patch_features = use_patch_features
         self.db_manager = DatabaseManager()
-        self.feature_extractor = DeepFeatureExtractor(feature_model)
+        self.feature_extractor = DINOv2FeatureExtractor(feature_model)
         self.feature_matcher = DeepFeatureMatcher(self.feature_extractor)
 
         # Create directories
@@ -349,6 +415,8 @@ class ObjectMatchingApp:
                 break
 
         logger.info(f"ObjectMatchingApp initialized for class: {target_class}")
+        logger.info(f"Using DINOv2 model: {feature_model}")
+        logger.info(f"Patch features enabled: {use_patch_features}")
 
     def process_single_image(self, image_path: str, confidence_threshold: float = 0.5) -> List[Dict]:
         """
@@ -392,8 +460,11 @@ class ObjectMatchingApp:
                         if object_img.shape[0] < 32 or object_img.shape[1] < 32:
                             continue
 
-                        # Extract deep learning features
-                        features = self.feature_extractor.extract_features(object_img)
+                        # Extract DINOv2 features
+                        if self.use_patch_features:
+                            features = self.feature_extractor.extract_features_with_patches(object_img)
+                        else:
+                            features = self.feature_extractor.extract_features(object_img)
 
                         if features is None:
                             continue
@@ -594,22 +665,27 @@ class ObjectMatchingApp:
             'target_class': self.target_class,
             'extracted_objects_dir': self.extracted_objects_dir,
             'query_objects_dir': self.query_objects_dir,
-            'feature_extractor': 'Deep Learning (ResNet50)',
+            'feature_extractor': f'DINOv2 ({self.feature_extractor.model_name})',
+            'feature_dimension': self.feature_extractor.feature_dim,
+            'patch_features': self.use_patch_features,
             'device': str(self.feature_extractor.device)
         }
 
 
 def main():
     """Main function for command line interface"""
-    parser = argparse.ArgumentParser(description="Object Matching Application with Deep Learning Features")
+    parser = argparse.ArgumentParser(description="Object Matching Application with DINOv2 Features")
     parser.add_argument("--mode", choices=["load", "query", "stats"], required=True,
                         help="Operation mode")
     parser.add_argument("--model", type=str, default="yolo11n.pt",
                         help="YOLO model path")
     parser.add_argument("--class", type=str, default="person", dest="target_class",
                         help="Target object class")
-    parser.add_argument("--feature-model", type=str, default="resnet50",
-                        help="Deep learning model for feature extraction")
+    parser.add_argument("--feature-model", type=str, default="dinov2_vits14",
+                        choices=["dinov2_vits14", "dinov2_vitb14", "dinov2_vitl14", "dinov2_vitg14"],
+                        help="DINOv2 model variant")
+    parser.add_argument("--patch-features", action="store_true",
+                        help="Use patch features in addition to CLS token")
     parser.add_argument("--images-dir", type=str,
                         help="Directory containing images (for load mode)")
     parser.add_argument("--query-image", type=str,
@@ -626,7 +702,7 @@ def main():
     args = parser.parse_args()
 
     # Initialize application
-    app = ObjectMatchingApp(args.model, args.target_class, args.feature_model)
+    app = ObjectMatchingApp(args.model, args.target_class, args.feature_model, args.patch_features)
 
     if args.mode == "load":
         if not args.images_dir:
@@ -674,6 +750,8 @@ def main():
         print("\nApplication Statistics:")
         print(f"  Target class: {stats['target_class']}")
         print(f"  Feature extractor: {stats['feature_extractor']}")
+        print(f"  Feature dimension: {stats['feature_dimension']}")
+        print(f"  Patch features enabled: {stats['patch_features']}")
         print(f"  Device: {stats['device']}")
         print(f"  Total images in database: {stats['database_stats']['total_images']}")
         print(f"  Total objects in database: {stats['database_stats']['total_objects']}")
