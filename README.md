@@ -259,13 +259,6 @@ stats = app.load_database(images_dir, confidence_threshold=0.5)
 matches = app.query_object(query_image_path, top_k=10)
 ```
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
 
 ## License
 
