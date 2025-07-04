@@ -34,6 +34,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def keypoints_to_dict(keypoints):
+    """Convert cv2.KeyPoint objects to serializable dictionary format"""
+    if keypoints is None:
+        return None
+
+    return [{'x': kp.pt[0], 'y': kp.pt[1], 'size': kp.size,
+             'angle': kp.angle, 'response': kp.response, 'octave': kp.octave,
+             'class_id': kp.class_id} for kp in keypoints]
+
+
+def dict_to_keypoints(keypoints_dict):
+    """Convert dictionary format back to cv2.KeyPoint objects"""
+    if keypoints_dict is None:
+        return None
+
+    return [cv2.KeyPoint(x=kp['x'], y=kp['y'], size=kp['size'],
+                         angle=kp['angle'], response=kp['response'],
+                         octave=kp['octave'], class_id=kp['class_id'])
+            for kp in keypoints_dict]
+
+
 class DatabaseManager:
     """
     Manages SQLite database operations for storing object features
@@ -107,8 +128,11 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Serialize keypoints and descriptors
-        keypoints_blob = pickle.dumps(object_data['keypoints']) if object_data['keypoints'] else None
+        # Convert keypoints to serializable format and serialize
+        keypoints_dict = keypoints_to_dict(object_data['keypoints'])
+        keypoints_blob = pickle.dumps(keypoints_dict) if keypoints_dict else None
+
+        # Serialize descriptors
         descriptors_blob = pickle.dumps(object_data['descriptors']) if object_data['descriptors'] is not None else None
 
         cursor.execute('''
@@ -156,6 +180,10 @@ class DatabaseManager:
 
         objects = []
         for row in results:
+            # Deserialize keypoints and convert back to cv2.KeyPoint objects
+            keypoints_dict = pickle.loads(row[11]) if row[11] else None
+            keypoints = dict_to_keypoints(keypoints_dict)
+
             obj = {
                 'id': row[0],
                 'image_id': row[1],
@@ -165,7 +193,7 @@ class DatabaseManager:
                 'object_image_path': row[8],
                 'keypoints_count': row[9],
                 'descriptors': pickle.loads(row[10]) if row[10] else None,
-                'keypoints': pickle.loads(row[11]) if row[11] else None,
+                'keypoints': keypoints,
                 'original_filename': row[12],
                 'original_filepath': row[13]
             }
