@@ -54,7 +54,7 @@ model_best = "runs/train/yolo11_custom/weights/best.pt"
 class DatabaseLoadRequest(BaseModel):
     confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     max_workers: int = Field(default=4, ge=1, le=16)
-    target_class: str = Field(default="person")
+    target_class: str = Field(default="clipper")
     model_path: str = Field(default=model_best)
 
 
@@ -102,7 +102,7 @@ class TaskStatus(BaseModel):
 
 
 # Helper functions
-def get_app_instance(model_path: str = model_best, target_class: str = "person") -> ObjectMatchingApp:
+def get_app_instance(model_path: str = model_best, target_class: str = "clipper") -> ObjectMatchingApp:
     """Get or create ObjectMatchingApp instance"""
     global object_matching_app
 
@@ -203,7 +203,7 @@ async def load_database_from_directory(
         images_directory: str = Form(...),
         confidence_threshold: float = Form(0.5),
         max_workers: int = Form(4),
-        target_class: str = Form("person"),
+        target_class: str = Form("clipper"),
         model_path: str = Form(model_best)
 ):
     """Load database from local directory (async)"""
@@ -244,7 +244,7 @@ async def load_database_from_zip(
         zip_file: UploadFile = File(...),
         confidence_threshold: float = Form(0.5),
         max_workers: int = Form(4),
-        target_class: str = Form("person"),
+        target_class: str = Form("clipper"),
         model_path: str = Form(model_best)
 ):
     """Load database from uploaded zip file (async)"""
@@ -325,7 +325,7 @@ async def query_object(
         confidence_threshold: float = Form(0.5),
         top_k: int = Form(10),
         object_class: Optional[str] = Form(None),
-        target_class: str = Form("person"),
+        target_class: str = Form("clipper"),
         model_path: str = Form(model_best)
 ):
     """Query database with uploaded image"""
@@ -367,7 +367,7 @@ async def query_object(
 
 @app.get("/stats", response_model=AppStats)
 async def get_statistics(
-        target_class: str = Query("person"),
+        target_class: str = Query("clipper"),
         model_path: str = Query(model_best)
 ):
     """Get application statistics"""
