@@ -134,10 +134,11 @@ dmypy.json
 .idea
 dataset
 yolo11n.pt
-db_img\
-query\
-extracted_objects\
-query_objects\
+db_img/
+query/
+extracted_objects/
+query_objects/
+runs/
 
 
 # Application specific files
