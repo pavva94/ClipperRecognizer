@@ -1,0 +1,245 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "containerRegistryName": {
+      "type": "string",
+      "defaultValue": "objectmatchingregistry",
+      "metadata": {
+        "description": "Name of the container registry"
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "defaultValue": "objectmatchingstorage",
+      "metadata": {
+        "description": "Name of the storage account"
+      }
+    },
+    "backendContainerName": {
+      "type": "string",
+      "defaultValue": "object-matching-backend",
+      "metadata": {
+        "description": "Name of the backend container"
+      }
+    },
+    "frontendContainerName": {
+      "type": "string",
+      "defaultValue": "object-matching-frontend",
+      "metadata": {
+        "description": "Name of the frontend container"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for all resources"
+      }
+    }
+  },
+  "variables": {
+    "containerRegistryLoginServer": "[concat(parameters('containerRegistryName'), '.azurecr.io')]",
+    "backendImage": "[concat(variables('containerRegistryLoginServer'), '/object-matching-backend:latest')]",
+    "frontendImage": "[concat(variables('containerRegistryLoginServer'), '/object-matching-frontend:latest')]",
+    "fileShareName": "objectmatchingshare"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2021-12-01-preview",
+      "name": "[parameters('containerRegistryName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Basic"
+      },
+      "properties": {
+        "adminUserEnabled": true
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2021-09-01",
+      "name": "[parameters('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "accessTier": "Hot"
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+      "apiVersion": "2021-09-01",
+      "name": "[concat(parameters('storageAccountName'), '/default/', variables('fileShareName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+      ],
+      "properties": {
+        "shareQuota": 10
+      }
+    },
+    {
+      "type": "Microsoft.ContainerInstance/containerGroups",
+      "apiVersion": "2021-10-01",
+      "name": "[parameters('backendContainerName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+      ],
+      "properties": {
+        "containers": [
+          {
+            "name": "[parameters('backendContainerName')]",
+            "properties": {
+              "image": "[variables('backendImage')]",
+              "ports": [
+                {
+                  "port": 8000,
+                  "protocol": "TCP"
+                }
+              ],
+              "environmentVariables": [
+                {
+                  "name": "PYTHONPATH",
+                  "value": "/app"
+                },
+                {
+                  "name": "UVICORN_HOST",
+                  "value": "0.0.0.0"
+                },
+                {
+                  "name": "UVICORN_PORT",
+                  "value": "8000"
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "cpu": 2,
+                  "memoryInGB": 4
+                }
+              },
+              "volumeMounts": [
+                {
+                  "name": "data-volume",
+                  "mountPath": "/app/data"
+                }
+              ]
+            }
+          }
+        ],
+        "imageRegistryCredentials": [
+          {
+            "server": "[variables('containerRegistryLoginServer')]",
+            "username": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2021-12-01-preview').username]",
+            "password": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2021-12-01-preview').passwords[0].value]"
+          }
+        ],
+        "restartPolicy": "Always",
+        "ipAddress": {
+          "type": "Public",
+          "ports": [
+            {
+              "port": 8000,
+              "protocol": "TCP"
+            }
+          ],
+          "dnsNameLabel": "[parameters('backendContainerName')]"
+        },
+        "osType": "Linux",
+        "volumes": [
+          {
+            "name": "data-volume",
+            "azureFile": {
+              "shareName": "[variables('fileShareName')]",
+              "storageAccountName": "[parameters('storageAccountName')]",
+              "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2021-09-01').keys[0].value]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.ContainerInstance/containerGroups",
+      "apiVersion": "2021-10-01",
+      "name": "[parameters('frontendContainerName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
+        "[resourceId('Microsoft.ContainerInstance/containerGroups', parameters('backendContainerName'))]"
+      ],
+      "properties": {
+        "containers": [
+          {
+            "name": "[parameters('frontendContainerName')]",
+            "properties": {
+              "image": "[variables('frontendImage')]",
+              "ports": [
+                {
+                  "port": 3000,
+                  "protocol": "TCP"
+                }
+              ],
+              "environmentVariables": [
+                {
+                  "name": "REACT_APP_API_URL",
+                  "value": "[concat('http://', parameters('backendContainerName'), '.', parameters('location'), '.azurecontainer.io:8000')]"
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "cpu": 1,
+                  "memoryInGB": 2
+                }
+              }
+            }
+          }
+        ],
+        "imageRegistryCredentials": [
+          {
+            "server": "[variables('containerRegistryLoginServer')]",
+            "username": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2021-12-01-preview').username]",
+            "password": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2021-12-01-preview').passwords[0].value]"
+          }
+        ],
+        "restartPolicy": "Always",
+        "ipAddress": {
+          "type": "Public",
+          "ports": [
+            {
+              "port": 3000,
+              "protocol": "TCP"
+            }
+          ],
+          "dnsNameLabel": "[parameters('frontendContainerName')]"
+        },
+        "osType": "Linux"
+      }
+    }
+  ],
+  "outputs": {
+    "containerRegistryLoginServer": {
+      "type": "string",
+      "value": "[variables('containerRegistryLoginServer')]"
+    },
+    "backendFQDN": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', parameters('backendContainerName'))).ipAddress.fqdn]"
+    },
+    "frontendFQDN": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', parameters('frontendContainerName'))).ipAddress.fqdn]"
+    },
+    "backendURL": {
+      "type": "string",
+      "value": "[concat('http://', reference(resourceId('Microsoft.ContainerInstance/containerGroups', parameters('backendContainerName'))).ipAddress.fqdn, ':8000')]"
+    },
+    "frontendURL": {
+      "type": "string",
+      "value": "[concat('http://', reference(resourceId('Microsoft.ContainerInstance/containerGroups', parameters('frontendContainerName'))).ipAddress.fqdn, ':3000')]"
+    }
+  }
+}
