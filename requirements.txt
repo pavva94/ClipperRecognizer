@@ -12,3 +12,5 @@ torchaudio
 fastapi
 uvicorn
 python-multipart
+types-PyYAML
+types-tqdm
