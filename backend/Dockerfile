@@ -34,7 +34,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # Copy application files
-COPY . .
+COPY best.pt .
+COPY object_matching.py .
+COPY object_matching_api.py .
+COPY yolo11n.pt .
 
 # Create necessary directories
 RUN mkdir -p extracted_objects query_objects runs/train/yolo11_custom/weights
