@@ -139,6 +139,12 @@ query/
 extracted_objects/
 query_objects/
 runs/
+backend/torch_hub_cache
+backend/extracted_objects
+backend/query_objects
+backend/runs
+backend/object_features.db
+backend/object_matching.log
 
 
 # Application specific files
