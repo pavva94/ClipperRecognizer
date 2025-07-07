@@ -10,7 +10,7 @@ uvicorn
 python-multipart
 types-PyYAML
 types-tqdm
---index-url https://download.pytorch.org/whl/cu128
+
 torch
 torchvision
 torchaudio
