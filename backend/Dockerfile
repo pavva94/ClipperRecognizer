@@ -1,5 +1,5 @@
 # Backend Dockerfile
-FROM python:3.9-slim
+FROM python:3.13-slim
 
 # Set working directory
 WORKDIR /app
@@ -38,6 +38,7 @@ COPY . .
 
 # Create necessary directories
 RUN mkdir -p extracted_objects query_objects runs/train/yolo11_custom/weights
+COPY best.pt runs/train/yolo11_custom/weights
 
 # Set environment variables
 ENV PYTHONPATH=/app

@@ -7,13 +7,14 @@ This application provides two main processes:
 """
 
 import os
+import sys
 import cv2
 import numpy as np
 import sqlite3
 import pickle
 import json
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Union
 from datetime import datetime
 import argparse
 import logging
@@ -29,6 +30,11 @@ from PIL import Image
 import warnings
 
 warnings.filterwarnings('ignore')
+
+# Check Python version
+if sys.version_info < (3, 8):
+    print("Error: This application requires Python 3.8 or higher")
+    sys.exit(1)
 
 # Configure logging
 logging.basicConfig(
@@ -135,7 +141,7 @@ class DatabaseManager:
         conn.close()
         return object_id
 
-    def get_all_objects(self, object_class: str = None, min_feature_dim: int = 100) -> List[Dict]:
+    def get_all_objects(self, object_class: Optional[str] = None, min_feature_dim: int = 100) -> List[Dict]:
         """Retrieve all objects from the database with optional filtering"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -217,7 +223,19 @@ class DINOv2FeatureExtractor:
 
         # Load DINOv2 model from torch hub
         try:
-            self.model = torch.hub.load('facebookresearch/dinov2', model_name)
+            logger.info(f"Loading DINOv2 model: {model_name}")
+
+            # Set torch hub directory to avoid permission issues
+            torch.hub.set_dir('./torch_hub_cache')
+
+            # Load the model with error handling
+            self.model = torch.hub.load(
+                'facebookresearch/dinov2',
+                model_name,
+                pretrained=True,
+                trust_repo=True
+            )
+
             self.model.to(self.device)
             self.model.eval()
 
@@ -233,11 +251,24 @@ class DINOv2FeatureExtractor:
             else:
                 self.feature_dim = feature_dim
 
+            logger.info(f"DINOv2 model loaded successfully")
+
         except Exception as e:
             logger.error(f"Failed to load DINOv2 model: {e}")
-            logger.info("Falling back to local model loading...")
-            # Alternative: try loading from local checkpoint if available
-            raise RuntimeError(f"Could not load DINOv2 model: {e}")
+            logger.info("Attempting alternative loading method...")
+
+            # Alternative loading method
+            try:
+                import timm
+                logger.info("Trying to load DINOv2 via timm...")
+                self.model = timm.create_model('vit_small_patch14_dinov2', pretrained=True)
+                self.model.to(self.device)
+                self.model.eval()
+                self.feature_dim = 384
+                logger.info("DINOv2 model loaded via timm successfully")
+            except Exception as e2:
+                logger.error(f"Alternative loading also failed: {e2}")
+                raise RuntimeError(f"Could not load DINOv2 model. Original error: {e}")
 
         # Image preprocessing pipeline for DINOv2
         self.transform = transforms.Compose([
@@ -250,7 +281,7 @@ class DINOv2FeatureExtractor:
         logger.info(f"DINOv2 feature extractor initialized with {model_name} on {self.device}")
         logger.info(f"Feature dimension: {self.feature_dim}")
 
-    def extract_features(self, image: np.ndarray) -> np.ndarray:
+    def extract_features(self, image: np.ndarray) -> Optional[np.ndarray]:
         """
         Extract DINOv2 features from an image
 
@@ -258,7 +289,7 @@ class DINOv2FeatureExtractor:
             image (np.ndarray): Input image (BGR format from OpenCV)
 
         Returns:
-            np.ndarray: Feature vector
+            Optional[np.ndarray]: Feature vector or None if extraction fails
         """
         try:
             # Convert BGR to RGB
@@ -290,7 +321,7 @@ class DINOv2FeatureExtractor:
             logger.error(f"Feature extraction error: {e}")
             return None
 
-    def extract_features_with_patches(self, image: np.ndarray) -> np.ndarray:
+    def extract_features_with_patches(self, image: np.ndarray) -> Optional[np.ndarray]:
         """
         Extract DINOv2 features including patch tokens (more detailed representation)
 
@@ -298,7 +329,7 @@ class DINOv2FeatureExtractor:
             image (np.ndarray): Input image (BGR format from OpenCV)
 
         Returns:
-            np.ndarray: Aggregated feature vector from all patches
+            Optional[np.ndarray]: Aggregated feature vector from all patches or None if extraction fails
         """
         try:
             # Convert BGR to RGB
@@ -315,21 +346,30 @@ class DINOv2FeatureExtractor:
 
             # Extract features using DINOv2
             with torch.no_grad():
-                # Get all features (CLS + patch tokens)
-                features = self.model.forward_features(input_tensor)
+                # Check if the model has forward_features method
+                if hasattr(self.model, 'forward_features'):
+                    # Get all features (CLS + patch tokens)
+                    features = self.model.forward_features(input_tensor)
 
-                # Option 1: Use only CLS token (global representation)
-                cls_token = features['x_norm_clstoken'].cpu().numpy().flatten()
+                    # Option 1: Use only CLS token (global representation)
+                    if isinstance(features, dict) and 'x_norm_clstoken' in features:
+                        cls_token = features['x_norm_clstoken'].cpu().numpy().flatten()
+                    else:
+                        # Fallback to regular feature extraction
+                        return self.extract_features(image)
 
-                # Option 2: Use patch tokens (local representations)
-                patch_tokens = features['x_norm_patchtokens']  # Shape: [batch, num_patches, feature_dim]
-
-                # Aggregate patch tokens (mean pooling)
-                patch_features = torch.mean(patch_tokens, dim=1).cpu().numpy().flatten()
-
-                # Combine CLS and patch features (or use only CLS)
-                # For now, we'll use only CLS token for consistency
-                final_features = cls_token
+                    # Option 2: Use patch tokens (local representations)
+                    if isinstance(features, dict) and 'x_norm_patchtokens' in features:
+                        patch_tokens = features['x_norm_patchtokens']  # Shape: [batch, num_patches, feature_dim]
+                        # Aggregate patch tokens (mean pooling)
+                        patch_features = torch.mean(patch_tokens, dim=1).cpu().numpy().flatten()
+                        # Combine CLS and patch features (or use only CLS)
+                        final_features = cls_token
+                    else:
+                        final_features = cls_token
+                else:
+                    # Fallback to regular feature extraction
+                    return self.extract_features(image)
 
                 # L2 normalize the features
                 final_features = final_features / (np.linalg.norm(final_features) + 1e-8)
@@ -574,7 +614,7 @@ class ObjectMatchingApp:
         return stats
 
     def query_object(self, query_image_path: str, confidence_threshold: float = 0.5,
-                     top_k: int = 10, object_class: str = None,
+                     top_k: int = 10, object_class: Optional[str] = None,
                      min_similarity: float = 0.5) -> List[Dict]:
         """
         Query the database with a single object image
@@ -583,7 +623,7 @@ class ObjectMatchingApp:
             query_image_path (str): Path to query image
             confidence_threshold (float): Minimum confidence threshold
             top_k (int): Number of top matches to return
-            object_class (str): Filter by object class (optional)
+            object_class (Optional[str]): Filter by object class (optional)
             min_similarity (float): Minimum similarity threshold
 
         Returns:
@@ -670,7 +710,6 @@ class ObjectMatchingApp:
             'patch_features': self.use_patch_features,
             'device': str(self.feature_extractor.device)
         }
-
 
 def main():
     """Main function for command line interface"""

@@ -3,7 +3,7 @@ import { Upload, Search, Database, BarChart3, FileText, Image, Loader2, CheckCir
 
 const ObjectMatchingApp = () => {
   const [activeTab, setActiveTab] = useState('database');
-  const [apiUrl, setApiUrl] = useState('http://localhost:8000');
+  const [apiUrl, setApiUrl] = useState('http://object-matching-backend.eastus.azurecontainer.io/:8000');
   const [stats, setStats] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [queryResults, setQueryResults] = useState([]);
@@ -25,7 +25,7 @@ const ObjectMatchingApp = () => {
     top_k: 10,
     object_class: '',
     target_class: 'clipper',
-    model_path: 'runs/train/yolo11_custom/weights/best.pt'
+    model_path: 'best.pt'
   });
 
   // Fetch stats
@@ -195,7 +195,7 @@ const ObjectMatchingApp = () => {
       <div className="max-w-6xl mx-auto">
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">Object Matching System</h1>
-          <p className="text-gray-600">YOLO + SIFT object matching and database management</p>
+          <p className="text-gray-600">Clipper Matcher (YOLO + DINOv2)</p>
 
           <div className="mt-4 flex gap-2">
             <input

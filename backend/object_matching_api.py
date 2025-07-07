@@ -8,7 +8,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, F
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
 import os
 import shutil
 import tempfile
@@ -47,7 +47,7 @@ app.add_middleware(
 object_matching_app = None
 background_tasks_status = {}
 
-model_best = "runs/train/yolo11_custom/weights/best.pt"
+model_best = "best.pt"
 
 
 # Pydantic models
@@ -107,7 +107,11 @@ def get_app_instance(model_path: str = model_best, target_class: str = "clipper"
     global object_matching_app
 
     if object_matching_app is None or object_matching_app.target_class != target_class:
-        object_matching_app = ObjectMatchingApp(model_path, target_class)
+        try:
+            object_matching_app = ObjectMatchingApp(model_path, target_class)
+        except Exception as e:
+            logger.error(f"Failed to create ObjectMatchingApp: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to initialize application: {str(e)}")
 
     return object_matching_app
 
