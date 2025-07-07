@@ -1,0 +1,16 @@
+ultralytics
+opencv-python
+numpy
+Pillow
+PyYAML
+matplotlib
+scikit-learn
+fastapi
+uvicorn
+python-multipart
+types-PyYAML
+types-tqdm
+
+torch
+torchvision
+torchaudio
