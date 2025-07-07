@@ -53,6 +53,7 @@ check_azure_cli() {
 check_azure_login() {
     if ! az account show &> /dev/null; then
         print_error "Please login to Azure CLI first: az login"
+        sleep 60
         exit 1
     fi
     print_status "User is logged in to Azure"
@@ -71,21 +72,57 @@ create_resource_group() {
     fi
 }
 
+# Function to check existing container registry and handle conflicts
+check_existing_registry() {
+    print_header "Checking Container Registry"
+
+    # Check if registry exists globally (without specifying resource group)
+    if az acr show --name $CONTAINER_REGISTRY &> /dev/null; then
+        # Get the actual resource group where the registry exists
+        ACTUAL_RG=$(az acr show --name $CONTAINER_REGISTRY --query resourceGroup -o tsv)
+
+        if [ "$ACTUAL_RG" != "$RESOURCE_GROUP" ]; then
+            print_warning "Container registry $CONTAINER_REGISTRY exists in resource group: $ACTUAL_RG"
+            print_warning "Expected resource group: $RESOURCE_GROUP"
+
+            read -p "Do you want to use the existing registry in $ACTUAL_RG? (y/N): " -n 1 -r
+            echo
+
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                print_status "Using existing registry in $ACTUAL_RG"
+                # Update the resource group for registry operations
+                REGISTRY_RESOURCE_GROUP=$ACTUAL_RG
+            else
+                print_error "Please either:"
+                print_error "1. Delete the existing registry: az acr delete --name $CONTAINER_REGISTRY --resource-group $ACTUAL_RG"
+                print_error "2. Use a different registry name in the script"
+                exit 1
+            fi
+        else
+            print_status "Container registry exists in correct resource group"
+            REGISTRY_RESOURCE_GROUP=$RESOURCE_GROUP
+        fi
+    else
+        print_status "Container registry does not exist, will create new one"
+        REGISTRY_RESOURCE_GROUP=$RESOURCE_GROUP
+    fi
+}
+
 # Function to create container registry
 create_container_registry() {
     print_header "Creating Container Registry"
 
-    if az acr show --name $CONTAINER_REGISTRY --resource-group $RESOURCE_GROUP &> /dev/null; then
+    if az acr show --name $CONTAINER_REGISTRY --resource-group $REGISTRY_RESOURCE_GROUP &> /dev/null; then
         print_warning "Container registry $CONTAINER_REGISTRY already exists"
     else
         print_status "Creating container registry: $CONTAINER_REGISTRY"
-        az acr create --resource-group $RESOURCE_GROUP --name $CONTAINER_REGISTRY --sku Basic --admin-enabled true
+        az acr create --resource-group $REGISTRY_RESOURCE_GROUP --name $CONTAINER_REGISTRY --sku Basic --admin-enabled true
         print_status "Container registry created successfully"
     fi
 
     # Get registry credentials
-    REGISTRY_USERNAME=$(az acr credential show --name $CONTAINER_REGISTRY --resource-group $RESOURCE_GROUP --query username -o tsv)
-    REGISTRY_PASSWORD=$(az acr credential show --name $CONTAINER_REGISTRY --resource-group $RESOURCE_GROUP --query passwords[0].value -o tsv)
+    REGISTRY_USERNAME=$(az acr credential show --name $CONTAINER_REGISTRY --query username -o tsv)
+    REGISTRY_PASSWORD=$(az acr credential show --name $CONTAINER_REGISTRY --query passwords[0].value -o tsv)
 
     print_status "Registry credentials obtained"
 }
@@ -116,9 +153,10 @@ create_storage() {
         --account-name $STORAGE_ACCOUNT \
         --account-key $STORAGE_KEY \
         --name $STORAGE_SHARE \
-        --quota 10
+        --quota 10 \
+        --output none 2>/dev/null || print_warning "File share may already exist"
 
-    print_status "File share created successfully"
+    print_status "File share ready"
 }
 
 # Function to build and push backend image
@@ -127,6 +165,7 @@ build_push_backend() {
 
     if [ ! -d "backend" ]; then
         print_error "Backend directory not found. Please run this script from the project root."
+        sleep 60
         exit 1
     fi
 
@@ -134,7 +173,7 @@ build_push_backend() {
     docker build -t $BACKEND_IMAGE ./backend
 
     print_status "Logging into container registry..."
-    echo $REGISTRY_PASSWORD | docker login $CONTAINER_REGISTRY.azurecr.io --username $REGISTRY_USERNAME --password-stdin
+    echo $REGISTRY_PASSWORD | docker login objectmatchingregistry.azurecr.io --username $REGISTRY_USERNAME --password-stdin
 
     print_status "Pushing backend image..."
     docker push $BACKEND_IMAGE
@@ -148,6 +187,7 @@ build_push_frontend() {
 
     if [ ! -d "frontend" ]; then
         print_error "Frontend directory not found. Please run this script from the project root."
+        sleep 60
         exit 1
     fi
 
@@ -171,7 +211,7 @@ deploy_backend() {
         --image $BACKEND_IMAGE \
         --cpu 2 \
         --memory 4 \
-        --registry-login-server $CONTAINER_REGISTRY.azurecr.io \
+        --registry-login-server objectmatchingregistry.azurecr.io \
         --registry-username $REGISTRY_USERNAME \
         --registry-password $REGISTRY_PASSWORD \
         --dns-name-label $BACKEND_CONTAINER \
@@ -201,7 +241,7 @@ deploy_frontend() {
         --image $FRONTEND_IMAGE \
         --cpu 1 \
         --memory 2 \
-        --registry-login-server $CONTAINER_REGISTRY.azurecr.io \
+        --registry-login-server objectmatchingregistry.azurecr.io \
         --registry-username $REGISTRY_USERNAME \
         --registry-password $REGISTRY_PASSWORD \
         --dns-name-label $FRONTEND_CONTAINER \
@@ -222,7 +262,8 @@ show_deployment_info() {
 
     echo "Resource Group: $RESOURCE_GROUP"
     echo "Location: $LOCATION"
-    echo "Container Registry: $CONTAINER_REGISTRY.azurecr.io"
+    echo "Container Registry: objectmatchingregistry.azurecr.io"
+    echo "Registry Resource Group: $REGISTRY_RESOURCE_GROUP"
     echo "Storage Account: $STORAGE_ACCOUNT"
     echo ""
     echo "Backend Container: $BACKEND_CONTAINER"
@@ -247,6 +288,17 @@ cleanup() {
         print_status "Deleting resource group: $RESOURCE_GROUP"
         az group delete --name $RESOURCE_GROUP --yes --no-wait
         print_status "Resource group deletion initiated"
+
+        # Ask about registry cleanup if it's in a different resource group
+        if [ "$REGISTRY_RESOURCE_GROUP" != "$RESOURCE_GROUP" ]; then
+            read -p "Do you also want to delete the container registry in $REGISTRY_RESOURCE_GROUP? (y/N): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                print_status "Deleting container registry: $CONTAINER_REGISTRY"
+                az acr delete --name $CONTAINER_REGISTRY --resource-group $REGISTRY_RESOURCE_GROUP --yes
+                print_status "Container registry deleted"
+            fi
+        fi
     else
         print_status "Cleanup cancelled"
     fi
@@ -279,6 +331,7 @@ show_logs() {
             ;;
         *)
             print_error "Invalid option"
+            sleep 60
             ;;
     esac
 }
@@ -296,6 +349,35 @@ restart_containers() {
     print_status "Containers restarted successfully"
 }
 
+# Function to force cleanup of orphaned resources
+force_cleanup() {
+    print_header "Force Cleanup of Orphaned Resources"
+
+    print_warning "This will attempt to find and delete orphaned resources"
+    read -p "Are you sure you want to proceed? (y/N): " -n 1 -r
+    echo
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        # Find and delete orphaned container registry
+        print_status "Searching for orphaned container registry..."
+        ORPHANED_REGISTRY=$(az acr list --query "[?name=='$CONTAINER_REGISTRY'].{name:name,resourceGroup:resourceGroup}" -o tsv)
+
+        if [ ! -z "$ORPHANED_REGISTRY" ]; then
+            print_status "Found orphaned registry: $ORPHANED_REGISTRY"
+            az acr delete --name $CONTAINER_REGISTRY --resource-group $(echo $ORPHANED_REGISTRY | cut -f2) --yes
+            print_status "Orphaned registry deleted"
+        else
+            print_status "No orphaned registry found"
+        fi
+
+        # Ensure resource group is completely clean
+        if az group show --name $RESOURCE_GROUP &> /dev/null; then
+            print_status "Deleting resource group: $RESOURCE_GROUP"
+            az group delete --name $RESOURCE_GROUP --yes --no-wait
+        fi
+    fi
+}
+
 # Main execution
 main() {
     print_header "Object Matching Application Deployment"
@@ -305,6 +387,7 @@ main() {
             check_azure_cli
             check_azure_login
             create_resource_group
+            check_existing_registry
             create_container_registry
             create_storage
             build_push_backend
@@ -316,6 +399,9 @@ main() {
         "cleanup")
             cleanup
             ;;
+        "force-cleanup")
+            force_cleanup
+            ;;
         "logs")
             show_logs
             ;;
@@ -326,14 +412,15 @@ main() {
             show_deployment_info
             ;;
         *)
-            echo "Usage: $0 {deploy|cleanup|logs|restart|status}"
+            echo "Usage: $0 {deploy|cleanup|force-cleanup|logs|restart|status}"
             echo ""
             echo "Commands:"
-            echo "  deploy   - Deploy the application (default)"
-            echo "  cleanup  - Delete all resources"
-            echo "  logs     - Show container logs"
-            echo "  restart  - Restart containers"
-            echo "  status   - Show deployment status"
+            echo "  deploy       - Deploy the application (default)"
+            echo "  cleanup      - Delete all resources"
+            echo "  force-cleanup - Force cleanup of orphaned resources"
+            echo "  logs         - Show container logs"
+            echo "  restart      - Restart containers"
+            echo "  status       - Show deployment status"
             exit 1
             ;;
     esac
