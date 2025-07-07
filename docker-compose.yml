@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - UVICORN_HOST=0.0.0.0
+      - UVICORN_PORT=8000
+    volumes:
+      - ./backend/extracted_objects:/app/extracted_objects
+      - ./backend/query_objects:/app/query_objects
+      - ./backend/database:/app/database
+      - ./backend/runs:/app/runs
+    networks:
+      - object-matching-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://backend:8000
+    depends_on:
+      - backend
+    networks:
+      - object-matching-network
+    restart: unless-stopped
+
+networks:
+  object-matching-network:
+    driver: bridge
+
+volumes:
+  backend_data:
+    driver: local
