@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Search, Database, BarChart3, FileText, Image, Loader2, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Upload, Search, Database, BarChart3, FileText, Image, Loader2, CheckCircle, XCircle, AlertCircle, RefreshCw, Settings } from 'lucide-react';
 
 const ObjectMatchingApp = () => {
   const [activeTab, setActiveTab] = useState('database');
-  const [apiUrl, setApiUrl] = useState('http://object-matching-backend.eastus.azurecontainer.io/:8000');
+  const [apiUrl, setApiUrl] = useState('http://object-matching-backend.eastus.azurecontainer.io:8000');
   const [stats, setStats] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [queryResults, setQueryResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState('unknown');
 
   // Database loading state
   const [dbLoading, setDbLoading] = useState(false);
@@ -28,29 +29,87 @@ const ObjectMatchingApp = () => {
     model_path: 'best.pt'
   });
 
+  // Test connection to API
+  const testConnection = async () => {
+    setConnectionStatus('testing');
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
+      const response = await fetch(`${apiUrl}/health`, {
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        setConnectionStatus('connected');
+        setError(null);
+        return true;
+      } else {
+        setConnectionStatus('error');
+        setError(`API responded with status: ${response.status}`);
+        return false;
+      }
+    } catch (err) {
+      setConnectionStatus('error');
+      if (err.name === 'AbortError') {
+        setError('Connection timeout - API may be down or unreachable');
+      } else {
+        setError(`Connection failed: ${err.message}`);
+      }
+      return false;
+    }
+  };
+
+  // Enhanced fetch with error handling
+  const fetchWithErrorHandling = async (url, options = {}) => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw new Error('Request timeout');
+      }
+      throw err;
+    }
+  };
+
   // Fetch stats
   const fetchStats = async () => {
     try {
-      const response = await fetch(`${apiUrl}/stats`);
-      if (response.ok) {
-        const data = await response.json();
-        setStats(data);
-      }
+      const data = await fetchWithErrorHandling(`${apiUrl}/stats`);
+      setStats(data);
     } catch (err) {
       console.error('Error fetching stats:', err);
+      setStats(null);
     }
   };
 
   // Fetch tasks
   const fetchTasks = async () => {
     try {
-      const response = await fetch(`${apiUrl}/tasks`);
-      if (response.ok) {
-        const data = await response.json();
-        setTasks(data.tasks);
-      }
+      const data = await fetchWithErrorHandling(`${apiUrl}/tasks`);
+      setTasks(data.tasks || []);
     } catch (err) {
       console.error('Error fetching tasks:', err);
+      setTasks([]);
     }
   };
 
@@ -62,8 +121,8 @@ const ObjectMatchingApp = () => {
     try {
       const formData = new FormData();
       formData.append('images_directory', directory);
-      formData.append('confidence_threshold', dbParams.confidence_threshold);
-      formData.append('max_workers', dbParams.max_workers);
+      formData.append('confidence_threshold', dbParams.confidence_threshold.toString());
+      formData.append('max_workers', dbParams.max_workers.toString());
       formData.append('target_class', dbParams.target_class);
       formData.append('model_path', dbParams.model_path);
 
@@ -74,10 +133,12 @@ const ObjectMatchingApp = () => {
 
       if (response.ok) {
         const data = await response.json();
+        setError(null);
         alert(`Database loading started. Task ID: ${data.task_id}`);
         fetchTasks();
       } else {
-        throw new Error('Failed to start database loading');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to start database loading');
       }
     } catch (err) {
       setError(err.message);
@@ -94,8 +155,8 @@ const ObjectMatchingApp = () => {
     try {
       const formData = new FormData();
       formData.append('zip_file', file);
-      formData.append('confidence_threshold', dbParams.confidence_threshold);
-      formData.append('max_workers', dbParams.max_workers);
+      formData.append('confidence_threshold', dbParams.confidence_threshold.toString());
+      formData.append('max_workers', dbParams.max_workers.toString());
       formData.append('target_class', dbParams.target_class);
       formData.append('model_path', dbParams.model_path);
 
@@ -106,10 +167,12 @@ const ObjectMatchingApp = () => {
 
       if (response.ok) {
         const data = await response.json();
+        setError(null);
         alert(`Database loading started from ZIP. Task ID: ${data.task_id}`);
         fetchTasks();
       } else {
-        throw new Error('Failed to start database loading from ZIP');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to start database loading from ZIP');
       }
     } catch (err) {
       setError(err.message);
@@ -126,8 +189,8 @@ const ObjectMatchingApp = () => {
     try {
       const formData = new FormData();
       formData.append('query_image', file);
-      formData.append('confidence_threshold', queryParams.confidence_threshold);
-      formData.append('top_k', queryParams.top_k);
+      formData.append('confidence_threshold', queryParams.confidence_threshold.toString());
+      formData.append('top_k', queryParams.top_k.toString());
       formData.append('object_class', queryParams.object_class);
       formData.append('target_class', queryParams.target_class);
       formData.append('model_path', queryParams.model_path);
@@ -140,8 +203,10 @@ const ObjectMatchingApp = () => {
       if (response.ok) {
         const data = await response.json();
         setQueryResults(data);
+        setError(null);
       } else {
-        throw new Error('Failed to query object');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to query object');
       }
     } catch (err) {
       setError(err.message);
@@ -158,8 +223,12 @@ const ObjectMatchingApp = () => {
           method: 'DELETE'
         });
         if (response.ok) {
+          setError(null);
           alert('Database cleared successfully');
           fetchStats();
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Failed to clear database');
         }
       } catch (err) {
         setError(err.message);
@@ -168,14 +237,45 @@ const ObjectMatchingApp = () => {
   };
 
   useEffect(() => {
-    fetchStats();
-    fetchTasks();
-    const interval = setInterval(() => {
-      fetchStats();
-      fetchTasks();
-    }, 5000); // Refresh every 5 seconds
-    return () => clearInterval(interval);
+    const initializeApp = async () => {
+      const isConnected = await testConnection();
+      if (isConnected) {
+        fetchStats();
+        fetchTasks();
+      }
+    };
+
+    initializeApp();
   }, [apiUrl]);
+
+  // Auto-refresh when connected
+  useEffect(() => {
+    if (connectionStatus === 'connected') {
+      const interval = setInterval(() => {
+        fetchStats();
+        fetchTasks();
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [connectionStatus, apiUrl]);
+
+  const ConnectionStatusIndicator = () => {
+    const statusConfig = {
+      unknown: { color: 'text-gray-500', bg: 'bg-gray-100', text: 'Unknown' },
+      testing: { color: 'text-blue-500', bg: 'bg-blue-100', text: 'Testing...' },
+      connected: { color: 'text-green-500', bg: 'bg-green-100', text: 'Connected' },
+      error: { color: 'text-red-500', bg: 'bg-red-100', text: 'Disconnected' }
+    };
+
+    const config = statusConfig[connectionStatus];
+
+    return (
+      <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${config.bg}`}>
+        <div className={`w-2 h-2 rounded-full ${config.color.replace('text-', 'bg-')}`} />
+        <span className={`text-sm font-medium ${config.color}`}>{config.text}</span>
+      </div>
+    );
+  };
 
   const StatusIcon = ({ status }) => {
     switch (status) {
@@ -194,24 +294,48 @@ const ObjectMatchingApp = () => {
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-6xl mx-auto">
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">Object Matching System</h1>
-          <p className="text-gray-600">Clipper Matcher (YOLO + DINOv2)</p>
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-800 mb-2">Object Matching System</h1>
+              <p className="text-gray-600">Clipper Matcher (YOLO + DINOv2)</p>
+            </div>
+            <ConnectionStatusIndicator />
+          </div>
 
-          <div className="mt-4 flex gap-2">
+          <div className="flex gap-2">
             <input
               type="text"
-              placeholder="API URL"
+              placeholder="API URL (e.g., http://localhost:8000)"
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
               className="px-3 py-2 border border-gray-300 rounded-md flex-1"
             />
             <button
-              onClick={fetchStats}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+              onClick={testConnection}
+              disabled={connectionStatus === 'testing'}
+              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 transition-colors flex items-center gap-2"
             >
+              {connectionStatus === 'testing' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
               Test Connection
             </button>
           </div>
+
+          {/* Connection troubleshooting help */}
+          {connectionStatus === 'error' && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+              <h4 className="font-medium text-yellow-800 mb-2">Connection Issues?</h4>
+              <ul className="text-sm text-yellow-700 space-y-1">
+                <li>• Check if the API server is running</li>
+                <li>• Verify the URL is correct (note the port in your URL)</li>
+                <li>• Ensure CORS is enabled on the API server</li>
+                <li>• Try using the full URL: http://object-matching-backend.eastus.azurecontainer.io:8000</li>
+              </ul>
+            </div>
+          )}
         </div>
 
         {error && (
@@ -318,7 +442,7 @@ const ObjectMatchingApp = () => {
                         const dir = document.getElementById('directory-input').value;
                         if (dir) loadDatabaseFromDirectory(dir);
                       }}
-                      disabled={dbLoading}
+                      disabled={dbLoading || connectionStatus !== 'connected'}
                       className="w-full px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 transition-colors"
                     >
                       {dbLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Load Database'}
@@ -339,7 +463,7 @@ const ObjectMatchingApp = () => {
                         const file = document.getElementById('zip-input').files[0];
                         if (file) loadDatabaseFromZip(file);
                       }}
-                      disabled={dbLoading}
+                      disabled={dbLoading || connectionStatus !== 'connected'}
                       className="w-full px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50 transition-colors"
                     >
                       {dbLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Load from ZIP'}
@@ -350,7 +474,8 @@ const ObjectMatchingApp = () => {
                 <div className="flex justify-center">
                   <button
                     onClick={clearDatabase}
-                    className="px-6 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors"
+                    disabled={connectionStatus !== 'connected'}
+                    className="px-6 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 disabled:opacity-50 transition-colors"
                   >
                     Clear Database
                   </button>
@@ -405,7 +530,7 @@ const ObjectMatchingApp = () => {
                       const file = document.getElementById('query-input').files[0];
                       if (file) queryObject(file);
                     }}
-                    disabled={loading}
+                    disabled={loading || connectionStatus !== 'connected'}
                     className="w-full px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50 transition-colors"
                   >
                     {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Search Similar Objects'}
@@ -424,14 +549,17 @@ const ObjectMatchingApp = () => {
                               src={`${apiUrl}/database/objects/${result.object_id}/image`}
                               alt={`Object ${result.object_id}`}
                               className="w-full h-32 object-cover rounded-md mb-2"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                              }}
                             />
                           </div>
                           <div className="text-sm space-y-1">
-                            <div><strong>Score:</strong> {result.normalized_score.toFixed(3)}</div>
-                            <div><strong>Class:</strong> {result.object_class}</div>
-                            <div><strong>Confidence:</strong> {result.confidence.toFixed(3)}</div>
-                            <div><strong>Matches:</strong> {result.matches_count}</div>
-                            <div><strong>Keypoints:</strong> {result.keypoints_count}</div>
+                            <div><strong>Score:</strong> {result.normalized_score?.toFixed(3) || 'N/A'}</div>
+                            <div><strong>Class:</strong> {result.object_class || 'N/A'}</div>
+                            <div><strong>Confidence:</strong> {result.confidence?.toFixed(3) || 'N/A'}</div>
+                            <div><strong>Matches:</strong> {result.matches_count || 0}</div>
+                            <div><strong>Keypoints:</strong> {result.keypoints_count || 0}</div>
                           </div>
                         </div>
                       ))}
@@ -442,34 +570,44 @@ const ObjectMatchingApp = () => {
             )}
 
             {/* Stats Tab */}
-            {activeTab === 'stats' && stats && (
+            {activeTab === 'stats' && (
               <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-blue-50 p-4 rounded-lg">
-                    <h3 className="font-medium text-blue-900">Total Images</h3>
-                    <p className="text-2xl font-bold text-blue-600">{stats.database_stats.total_images}</p>
-                  </div>
-                  <div className="bg-green-50 p-4 rounded-lg">
-                    <h3 className="font-medium text-green-900">Total Objects</h3>
-                    <p className="text-2xl font-bold text-green-600">{stats.database_stats.total_objects}</p>
-                  </div>
-                  <div className="bg-purple-50 p-4 rounded-lg">
-                    <h3 className="font-medium text-purple-900">Avg Keypoints</h3>
-                    <p className="text-2xl font-bold text-purple-600">{stats.database_stats.avg_keypoints.toFixed(1)}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-lg font-medium mb-4">Class Distribution</h3>
-                  <div className="space-y-2">
-                    {Object.entries(stats.database_stats.class_counts).map(([cls, count]) => (
-                      <div key={cls} className="flex justify-between items-center bg-gray-50 p-2 rounded">
-                        <span className="font-medium">{cls}</span>
-                        <span className="text-gray-600">{count}</span>
+                {stats ? (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-blue-50 p-4 rounded-lg">
+                        <h3 className="font-medium text-blue-900">Total Images</h3>
+                        <p className="text-2xl font-bold text-blue-600">{stats.database_stats?.total_images || 0}</p>
                       </div>
-                    ))}
+                      <div className="bg-green-50 p-4 rounded-lg">
+                        <h3 className="font-medium text-green-900">Total Objects</h3>
+                        <p className="text-2xl font-bold text-green-600">{stats.database_stats?.total_objects || 0}</p>
+                      </div>
+                      <div className="bg-purple-50 p-4 rounded-lg">
+                        <h3 className="font-medium text-purple-900">Avg Keypoints</h3>
+                        <p className="text-2xl font-bold text-purple-600">{stats.database_stats?.avg_keypoints?.toFixed(1) || '0.0'}</p>
+                      </div>
+                    </div>
+
+                    {stats.database_stats?.class_counts && (
+                      <div>
+                        <h3 className="text-lg font-medium mb-4">Class Distribution</h3>
+                        <div className="space-y-2">
+                          {Object.entries(stats.database_stats.class_counts).map(([cls, count]) => (
+                            <div key={cls} className="flex justify-between items-center bg-gray-50 p-2 rounded">
+                              <span className="font-medium">{cls}</span>
+                              <span className="text-gray-600">{count}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    {connectionStatus === 'connected' ? 'Loading statistics...' : 'Connect to API to view statistics'}
                   </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -480,7 +618,8 @@ const ObjectMatchingApp = () => {
                   <h3 className="text-lg font-medium">Background Tasks</h3>
                   <button
                     onClick={fetchTasks}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+                    disabled={connectionStatus !== 'connected'}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 transition-colors"
                   >
                     Refresh
                   </button>
@@ -488,7 +627,7 @@ const ObjectMatchingApp = () => {
 
                 {tasks.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
-                    No background tasks found
+                    {connectionStatus === 'connected' ? 'No background tasks found' : 'Connect to API to view tasks'}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -530,6 +669,19 @@ const TaskItem = ({ taskId, apiUrl }) => {
 
   if (!taskDetails) return null;
 
+  const StatusIcon = ({ status }) => {
+    switch (status) {
+      case 'completed':
+        return <CheckCircle className="w-4 h-4 text-green-500" />;
+      case 'failed':
+        return <XCircle className="w-4 h-4 text-red-500" />;
+      case 'running':
+        return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
+      default:
+        return <AlertCircle className="w-4 h-4 text-yellow-500" />;
+    }
+  };
+
   return (
     <div className="border border-gray-200 rounded-lg p-4">
       <div className="flex items-center justify-between">
@@ -549,19 +701,6 @@ const TaskItem = ({ taskId, apiUrl }) => {
       )}
     </div>
   );
-};
-
-const StatusIcon = ({ status }) => {
-  switch (status) {
-    case 'completed':
-      return <CheckCircle className="w-4 h-4 text-green-500" />;
-    case 'failed':
-      return <XCircle className="w-4 h-4 text-red-500" />;
-    case 'running':
-      return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
-    default:
-      return <AlertCircle className="w-4 h-4 text-yellow-500" />;
-  }
 };
 
 export default ObjectMatchingApp;
