@@ -20,13 +20,14 @@ const ObjectMatchingApp = () => {
     model_path: 'runs/train/yolo11_custom/weights/best.pt'
   });
 
-  // Query state
+  // Query state - UPDATED with min_similarity
   const [queryParams, setQueryParams] = useState({
     confidence_threshold: 0.5,
     top_k: 10,
     object_class: '',
     target_class: 'clipper',
-    model_path: 'best.pt'
+    model_path: 'best.pt',
+    min_similarity: 0.5  // Added min_similarity parameter
   });
 
   // Test connection to API
@@ -181,7 +182,7 @@ const ObjectMatchingApp = () => {
     }
   };
 
-  // Query object
+  // Query object - UPDATED to include min_similarity
   const queryObject = async (file) => {
     setLoading(true);
     setError(null);
@@ -194,6 +195,7 @@ const ObjectMatchingApp = () => {
       formData.append('object_class', queryParams.object_class);
       formData.append('target_class', queryParams.target_class);
       formData.append('model_path', queryParams.model_path);
+      formData.append('min_similarity', queryParams.min_similarity.toString()); // Added min_similarity
 
       const response = await fetch(`${apiUrl}/query`, {
         method: 'POST',
@@ -483,10 +485,10 @@ const ObjectMatchingApp = () => {
               </div>
             )}
 
-            {/* Query Tab */}
+            {/* Query Tab - UPDATED with min_similarity field */}
             {activeTab === 'query' && (
               <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Confidence Threshold
@@ -511,6 +513,20 @@ const ObjectMatchingApp = () => {
                       max="100"
                       value={queryParams.top_k}
                       onChange={(e) => setQueryParams({...queryParams, top_k: parseInt(e.target.value)})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Minimum Similarity
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      value={queryParams.min_similarity}
+                      onChange={(e) => setQueryParams({...queryParams, min_similarity: parseFloat(e.target.value)})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md"
                     />
                   </div>
@@ -555,11 +571,11 @@ const ObjectMatchingApp = () => {
                             />
                           </div>
                           <div className="text-sm space-y-1">
-                            <div><strong>Score:</strong> {result.normalized_score?.toFixed(3) || 'N/A'}</div>
+                            <div><strong>Score:</strong> {result.similarity_score?.toFixed(3) || 'N/A'}</div>
                             <div><strong>Class:</strong> {result.object_class || 'N/A'}</div>
                             <div><strong>Confidence:</strong> {result.confidence?.toFixed(3) || 'N/A'}</div>
-                            <div><strong>Matches:</strong> {result.matches_count || 0}</div>
-                            <div><strong>Keypoints:</strong> {result.keypoints_count || 0}</div>
+                            <div><strong>Features:</strong> {result.feature_dim || 0}</div>
+                            <div><strong>File:</strong> {result.original_filename || 'N/A'}</div>
                           </div>
                         </div>
                       ))}
