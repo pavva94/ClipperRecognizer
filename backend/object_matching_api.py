@@ -66,15 +66,18 @@ class QueryRequest(BaseModel):
 
 class MatchResult(BaseModel):
     object_id: int
-    similarity_score: int
-    normalized_score: float
-    matches_count: int
+    similarity_score: float  # Changed from int to float
     object_class: str
     confidence: float
     original_filename: str
     original_filepath: str
     object_image_path: str
-    keypoints_count: int
+    feature_dim: int  # This field exists in your data
+
+    # Optional fields with defaults for backward compatibility
+    normalized_score: Optional[float] = None
+    matches_count: Optional[int] = None
+    keypoints_count: Optional[int] = None
 
 
 class DatabaseStats(BaseModel):
@@ -330,7 +333,8 @@ async def query_object(
         top_k: int = Form(10),
         object_class: Optional[str] = Form(None),
         target_class: str = Form("clipper"),
-        model_path: str = Form(model_best)
+        model_path: str = Form(model_best),
+        min_similarity: float = Form(0.5)  # Add min_similarity parameter
 ):
     """Query database with uploaded image"""
     if not query_image.filename.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp')):
@@ -347,17 +351,36 @@ async def query_object(
         # Get app instance
         app_instance = get_app_instance(model_path, target_class)
 
-        # Perform query
-        matches = app_instance.query_object(query_path, confidence_threshold, top_k, object_class)
-
-        print(matches)
-        logger.warning(matches)
+        # Perform query with min_similarity parameter
+        matches = app_instance.query_object(
+            query_path,
+            confidence_threshold,
+            top_k,
+            object_class,
+            min_similarity
+        )
 
         # Convert to response format
         results = []
         for match in matches:
-            results.append(MatchResult(**match))
-        logger.warning(results)
+            # Create MatchResult with all available fields
+            result_data = {
+                'object_id': match['object_id'],
+                'similarity_score': match['similarity_score'],  # This is already a float
+                'object_class': match['object_class'],
+                'confidence': match['confidence'],
+                'original_filename': match['original_filename'],
+                'original_filepath': match['original_filepath'],
+                'object_image_path': match['object_image_path'],
+                'feature_dim': match['feature_dim'],
+                # Set optional fields
+                'normalized_score': match['similarity_score'],  # Use similarity_score as normalized_score
+                'matches_count': 1,  # Default value since we're using cosine similarity
+                'keypoints_count': match['feature_dim']  # Use feature dimension as keypoints count
+            }
+            results.append(MatchResult(**result_data))
+
+        logger.info(f"Returning {len(results)} matches")
         return results
 
     except Exception as e:
