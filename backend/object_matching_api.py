@@ -84,14 +84,17 @@ class DatabaseStats(BaseModel):
     total_images: int
     total_objects: int
     class_counts: Dict[str, int]
-    avg_keypoints: float
-
+    avg_feature_dim: float  # Changed from avg_keypoints to match database manager
 
 class AppStats(BaseModel):
     database_stats: DatabaseStats
     target_class: str
     extracted_objects_dir: str
     query_objects_dir: str
+    feature_extractor: str  # Add missing field
+    feature_dimension: int  # Add missing field
+    patch_features: bool    # Add missing field
+    device: str            # Add missing field
 
 
 class TaskStatus(BaseModel):
@@ -406,36 +409,36 @@ async def get_statistics(
             database_stats=DatabaseStats(**stats['database_stats']),
             target_class=stats['target_class'],
             extracted_objects_dir=stats['extracted_objects_dir'],
-            query_objects_dir=stats['query_objects_dir']
+            query_objects_dir=stats['query_objects_dir'],
+            feature_extractor=stats['feature_extractor'],
+            feature_dimension=stats['feature_dimension'],
+            patch_features=stats['patch_features'],
+            device=stats['device']
         )
     except Exception as e:
         logger.error(f"Stats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/database/objects")
 async def list_database_objects(
         object_class: Optional[str] = Query(None),
-        min_keypoints: int = Query(10),
+        min_feature_dim: int = Query(100),  # Changed from min_keypoints
         limit: int = Query(100),
         offset: int = Query(0)
 ):
     """List objects in database with pagination"""
     try:
         db_manager = DatabaseManager()
-
-        # Ensure database schema is up to date
         db_manager.init_database()
 
-        all_objects = db_manager.get_all_objects(object_class, min_keypoints)
+        all_objects = db_manager.get_all_objects(object_class, min_feature_dim)
 
         # Apply pagination
         paginated_objects = all_objects[offset:offset + limit]
 
         # Remove binary data for API response
         for obj in paginated_objects:
-            obj.pop('descriptors', None)
-            obj.pop('keypoints', None)
+            obj.pop('feature_vector', None)  # Remove feature_vector instead of descriptors/keypoints
 
         return {
             "objects": paginated_objects,
@@ -447,7 +450,6 @@ async def list_database_objects(
     except Exception as e:
         logger.error(f"List objects error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/database/objects/{object_id}/image")
 async def get_object_image(object_id: int):
