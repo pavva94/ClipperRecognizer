@@ -376,141 +376,162 @@ const ObjectMatchingApp = () => {
           <div className="p-6">
             {/* Database Tab */}
             {activeTab === 'database' && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Confidence Threshold
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="1"
-                      value={dbParams.confidence_threshold}
-                      onChange={(e) => setDbParams({...dbParams, confidence_threshold: parseFloat(e.target.value)})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Max Workers
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="16"
-                      value={dbParams.max_workers}
-                      onChange={(e) => setDbParams({...dbParams, max_workers: parseInt(e.target.value)})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Target Class
-                    </label>
-                    <input
-                      type="text"
-                      value={dbParams.target_class}
-                      onChange={(e) => setDbParams({...dbParams, target_class: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Model Path
-                    </label>
-                    <input
-                      type="text"
-                      value={dbParams.model_path}
-                      onChange={(e) => setDbParams({...dbParams, model_path: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                </div>
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Confidence Threshold
+                      </label>
+                      <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="1"
+                          value={dbParams.confidence_threshold}
+                          onChange={(e) => setDbParams({...dbParams, confidence_threshold: parseFloat(e.target.value)})}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Max Workers
+                      </label>
+                      <input
+                          type="number"
+                          min="1"
+                          max="16"
+                          value={dbParams.max_workers}
+                          onChange={(e) => setDbParams({...dbParams, max_workers: parseInt(e.target.value)})}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Target Class
+                      </label>
+                      <input
+                          type="text"
+                          value={dbParams.target_class}
+                          onChange={(e) => setDbParams({...dbParams, target_class: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Model Path
+                      </label>
+                      <input
+                          type="text"
+                          value={dbParams.model_path}
+                          onChange={(e) => setDbParams({...dbParams, model_path: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                    <Upload className="w-8 h-8 mx-auto mb-4 text-gray-400" />
-                    <h3 className="text-lg font-medium mb-2">Load from Directory</h3>
-                    <input
-                      type="text"
-                      placeholder="Directory path"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md mb-4"
-                      id="directory-input"
-                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900">Feature Extractor</h4>
+                      <p className="text-sm text-gray-600">{stats?.feature_extractor || 'N/A'}</p>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900">Feature Dimension</h4>
+                      <p className="text-sm text-gray-600">{stats?.feature_dimension || 'N/A'}</p>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900">Device</h4>
+                      <p className="text-sm text-gray-600">{stats?.device || 'N/A'}</p>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <h4 className="font-medium text-gray-900">Patch Features</h4>
+                      <p className="text-sm text-gray-600">{stats?.patch_features ? 'Enabled' : 'Disabled'}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                      <Upload className="w-8 h-8 mx-auto mb-4 text-gray-400"/>
+                      <h3 className="text-lg font-medium mb-2">Load from Directory</h3>
+                      <input
+                          type="text"
+                          placeholder="Directory path"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md mb-4"
+                          id="directory-input"
+                      />
+                      <button
+                          onClick={() => {
+                            const dir = document.getElementById('directory-input').value;
+                            if (dir) loadDatabaseFromDirectory(dir);
+                          }}
+                          disabled={dbLoading || connectionStatus !== 'connected'}
+                          className="w-full px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                      >
+                        {dbLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Load Database'}
+                      </button>
+                    </div>
+
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                      <Upload className="w-8 h-8 mx-auto mb-4 text-gray-400"/>
+                      <h3 className="text-lg font-medium mb-2">Load from ZIP</h3>
+                      <input
+                          type="file"
+                          accept=".zip"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md mb-4"
+                          id="zip-input"
+                      />
+                      <button
+                          onClick={() => {
+                            const file = document.getElementById('zip-input').files[0];
+                            if (file) loadDatabaseFromZip(file);
+                          }}
+                          disabled={dbLoading || connectionStatus !== 'connected'}
+                          className="w-full px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50 transition-colors"
+                      >
+                        {dbLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'Load from ZIP'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-center">
                     <button
-                      onClick={() => {
-                        const dir = document.getElementById('directory-input').value;
-                        if (dir) loadDatabaseFromDirectory(dir);
-                      }}
-                      disabled={dbLoading || connectionStatus !== 'connected'}
-                      className="w-full px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                        onClick={clearDatabase}
+                        disabled={connectionStatus !== 'connected'}
+                        className="px-6 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 disabled:opacity-50 transition-colors"
                     >
-                      {dbLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Load Database'}
+                      Clear Database
                     </button>
                   </div>
-
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                    <Upload className="w-8 h-8 mx-auto mb-4 text-gray-400" />
-                    <h3 className="text-lg font-medium mb-2">Load from ZIP</h3>
-                    <input
-                      type="file"
-                      accept=".zip"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md mb-4"
-                      id="zip-input"
-                    />
-                    <button
-                      onClick={() => {
-                        const file = document.getElementById('zip-input').files[0];
-                        if (file) loadDatabaseFromZip(file);
-                      }}
-                      disabled={dbLoading || connectionStatus !== 'connected'}
-                      className="w-full px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50 transition-colors"
-                    >
-                      {dbLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Load from ZIP'}
-                    </button>
-                  </div>
                 </div>
-
-                <div className="flex justify-center">
-                  <button
-                    onClick={clearDatabase}
-                    disabled={connectionStatus !== 'connected'}
-                    className="px-6 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 disabled:opacity-50 transition-colors"
-                  >
-                    Clear Database
-                  </button>
-                </div>
-              </div>
             )}
 
             {/* Query Tab - UPDATED with min_similarity field */}
             {activeTab === 'query' && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Confidence Threshold
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="1"
-                      value={queryParams.confidence_threshold}
-                      onChange={(e) => setQueryParams({...queryParams, confidence_threshold: parseFloat(e.target.value)})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Top K Results
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Confidence Threshold
+                      </label>
+                      <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="1"
+                          value={queryParams.confidence_threshold}
+                          onChange={(e) => setQueryParams({
+                            ...queryParams,
+                            confidence_threshold: parseFloat(e.target.value)
+                          })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Top K Results
+                      </label>
+                      <input
+                          type="number"
+                          min="1"
+                          max="100"
                       value={queryParams.top_k}
                       onChange={(e) => setQueryParams({...queryParams, top_k: parseInt(e.target.value)})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md"
@@ -574,7 +595,7 @@ const ObjectMatchingApp = () => {
                             <div><strong>Score:</strong> {result.similarity_score?.toFixed(3) || 'N/A'}</div>
                             <div><strong>Class:</strong> {result.object_class || 'N/A'}</div>
                             <div><strong>Confidence:</strong> {result.confidence?.toFixed(3) || 'N/A'}</div>
-                            <div><strong>Features:</strong> {result.feature_dim || 0}</div>
+                            <div><strong>Feature Dim:</strong> {result.feature_dim || 0}</div>
                             <div><strong>File:</strong> {result.original_filename || 'N/A'}</div>
                           </div>
                         </div>
@@ -600,15 +621,15 @@ const ObjectMatchingApp = () => {
                         <p className="text-2xl font-bold text-green-600">{stats.database_stats?.total_objects || 0}</p>
                       </div>
                       <div className="bg-purple-50 p-4 rounded-lg">
-                        <h3 className="font-medium text-purple-900">Avg Keypoints</h3>
-                        <p className="text-2xl font-bold text-purple-600">{stats.database_stats?.avg_keypoints?.toFixed(1) || '0.0'}</p>
+                        <h3 className="font-medium text-purple-900">Avg Feature Dim</h3>
+                        <p className="text-2xl font-bold text-purple-600">{stats.database_stats?.avg_feature_dim?.toFixed(1) || '0.0'}</p>
                       </div>
                     </div>
 
                     {stats.database_stats?.class_counts && (
-                      <div>
-                        <h3 className="text-lg font-medium mb-4">Class Distribution</h3>
-                        <div className="space-y-2">
+                        <div>
+                          <h3 className="text-lg font-medium mb-4">Class Distribution</h3>
+                          <div className="space-y-2">
                           {Object.entries(stats.database_stats.class_counts).map(([cls, count]) => (
                             <div key={cls} className="flex justify-between items-center bg-gray-50 p-2 rounded">
                               <span className="font-medium">{cls}</span>
