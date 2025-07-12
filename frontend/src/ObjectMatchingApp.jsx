@@ -114,39 +114,45 @@ const ObjectMatchingApp = () => {
     }
   };
 
-  // Load database from directory
-  const loadDatabaseFromDirectory = async (directory) => {
-    setDbLoading(true);
-    setError(null);
+  // Load database from files
+const loadDatabaseFromFiles = async (files) => {
+  setDbLoading(true);
+  setError(null);
 
-    try {
-      const formData = new FormData();
-      formData.append('images_directory', directory);
-      formData.append('confidence_threshold', dbParams.confidence_threshold.toString());
-      formData.append('max_workers', dbParams.max_workers.toString());
-      formData.append('target_class', dbParams.target_class);
-      formData.append('model_path', dbParams.model_path);
+  try {
+    const formData = new FormData();
 
-      const response = await fetch(`${apiUrl}/database/load-from-directory`, {
-        method: 'POST',
-        body: formData
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setError(null);
-        alert(`Database loading started. Task ID: ${data.task_id}`);
-        fetchTasks();
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'Failed to start database loading');
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setDbLoading(false);
+    // Append all files
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
     }
-  };
+
+    // Append parameters
+    formData.append('confidence_threshold', dbParams.confidence_threshold.toString());
+    formData.append('max_workers', dbParams.max_workers.toString());
+    formData.append('target_class', dbParams.target_class);
+    formData.append('model_path', dbParams.model_path);
+
+    const response = await fetch(`${apiUrl}/database/load-from-files`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      setError(null);
+      alert(`Database loading started from ${files.length} files. Task ID: ${data.task_id}`);
+      fetchTasks();
+    } else {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to start database loading from files');
+    }
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setDbLoading(false);
+  }
+};
 
   // Load database from ZIP
   const loadDatabaseFromZip = async (file) => {
@@ -450,17 +456,18 @@ const ObjectMatchingApp = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
                       <Upload className="w-8 h-8 mx-auto mb-4 text-gray-400"/>
-                      <h3 className="text-lg font-medium mb-2">Load from Directory</h3>
+                      <h3 className="text-lg font-medium mb-2">Load from Files</h3>
                       <input
-                          type="text"
-                          placeholder="Directory path"
+                          type="file"
+                          accept="image/*"
+                          multiple
                           className="w-full px-3 py-2 border border-gray-300 rounded-md mb-4"
-                          id="directory-input"
+                          id="files-input"
                       />
                       <button
                           onClick={() => {
-                            const dir = document.getElementById('directory-input').value;
-                            if (dir) loadDatabaseFromDirectory(dir);
+                            const files = document.getElementById('files-input').files;
+                            if (files && files.length > 0) loadDatabaseFromFiles(files);
                           }}
                           disabled={dbLoading || connectionStatus !== 'connected'}
                           className="w-full px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 transition-colors"
@@ -509,7 +516,7 @@ const ObjectMatchingApp = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Confidence Threshold
+                      Confidence Threshold
                       </label>
                       <input
                           type="number"

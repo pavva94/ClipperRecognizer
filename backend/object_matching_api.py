@@ -190,7 +190,7 @@ async def root():
         "message": "Object Matching API",
         "version": "1.0.0",
         "endpoints": {
-            "load_database_from_directory": "/database/load-from-directory",
+            "load_database_from_directory": "/database/load-from-files",
             "load_database_from_zip": "/database/load-from-zip",
             "query_object": "/query",
             "get_stats": "/stats",
@@ -207,45 +207,66 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 
-@app.post("/database/load-from-directory")
-async def load_database_from_directory(
+@app.post("/database/load-from-files")
+async def load_database_from_files(
         background_tasks: BackgroundTasks,
-        images_directory: str = Form(...),
+        files: List[UploadFile] = File(...),
         confidence_threshold: float = Form(0.5),
         max_workers: int = Form(4),
         target_class: str = Form("clipper"),
         model_path: str = Form(model_best)
 ):
-    """Load database from local directory (async)"""
-    if not os.path.exists(images_directory):
-        raise HTTPException(status_code=404, detail="Images directory not found")
+    """Load database from uploaded files (async)"""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
 
-    # Generate task ID
-    task_id = f"load_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(background_tasks_status)}"
+    # Validate file types
+    supported_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+    for file in files:
+        if not any(file.filename.lower().endswith(ext) for ext in supported_extensions):
+            raise HTTPException(status_code=400, detail=f"Unsupported file format: {file.filename}")
 
-    # Initialize task status
-    background_tasks_status[task_id] = {
-        "task_id": task_id,
-        "status": "queued",
-        "progress": None,
-        "result": None,
-        "error": None,
-        "created_at": datetime.now(),
-        "completed_at": None
-    }
+    # Create temporary directory
+    temp_dir = tempfile.mkdtemp(prefix="object_matching_files_")
 
-    # Add background task
-    background_tasks.add_task(
-        background_database_load,
-        task_id, images_directory, confidence_threshold, max_workers, model_path, target_class
-    )
+    try:
+        # Save all uploaded files
+        saved_files = []
+        for i, file in enumerate(files):
+            file_path = os.path.join(temp_dir, f"{i:04d}_{file.filename}")
+            save_uploaded_file(file, file_path)
+            saved_files.append(file_path)
 
-    return {
-        "task_id": task_id,
-        "status": "queued",
-        "message": "Database loading started in background",
-        "status_url": f"/tasks/{task_id}"
-    }
+        # Generate task ID
+        task_id = f"load_files_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(background_tasks_status)}"
+
+        # Initialize task status
+        background_tasks_status[task_id] = {
+            "task_id": task_id,
+            "status": "queued",
+            "progress": None,
+            "result": None,
+            "error": None,
+            "created_at": datetime.now(),
+            "completed_at": None
+        }
+
+        # Add background task
+        background_tasks.add_task(
+            background_database_load,
+            task_id, temp_dir, confidence_threshold, max_workers, model_path, target_class
+        )
+
+        return {
+            "task_id": task_id,
+            "status": "queued",
+            "message": f"Database loading started from {len(files)} uploaded files",
+            "status_url": f"/tasks/{task_id}"
+        }
+
+    except Exception as e:
+        shutil.rmtree(temp_dir)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/database/load-from-zip")
